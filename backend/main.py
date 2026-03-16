@@ -56,6 +56,7 @@ def cleanup_old_files():
 
 @app.on_event("startup")
 async def startup_event():
+    print("[startup] Subtitle Generator API starting up", flush=True)
     loop = asyncio.get_event_loop()
     loop.run_in_executor(None, cleanup_old_files)
 
@@ -89,6 +90,8 @@ async def upload_video(file: UploadFile = File(...)):
     transcoded_path = video_dir / "video.mp4"
     audio_path = video_dir / "audio.wav"
 
+    print(f"[upload] Received file: {file.filename} (video_id={video_id})", flush=True)
+
     # Save uploaded file
     try:
         async with aiofiles.open(original_path, "wb") as out_file:
@@ -97,11 +100,13 @@ async def upload_video(file: UploadFile = File(...)):
                 if not chunk:
                     break
                 await out_file.write(chunk)
+        print(f"[upload] File saved to {original_path}", flush=True)
     except Exception as e:
         shutil.rmtree(video_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {e}")
 
     # Transcode video to 480p H264 mp4
+    print(f"[upload] Transcoding to 480p H264...", flush=True)
     try:
         loop = asyncio.get_event_loop()
 
@@ -124,6 +129,7 @@ async def upload_video(file: UploadFile = File(...)):
             )
 
         await loop.run_in_executor(None, transcode_video)
+        print(f"[upload] Transcoding complete", flush=True)
     except ffmpeg.Error as e:
         shutil.rmtree(video_dir, ignore_errors=True)
         raise HTTPException(
@@ -135,6 +141,7 @@ async def upload_video(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Video transcoding failed: {e}")
 
     # Extract audio as 16kHz mono wav for whisper
+    print(f"[upload] Extracting 16kHz mono WAV for Whisper...", flush=True)
     try:
         def extract_audio():
             (
@@ -151,6 +158,7 @@ async def upload_video(file: UploadFile = File(...)):
             )
 
         await loop.run_in_executor(None, extract_audio)
+        print(f"[upload] Audio extraction complete", flush=True)
     except ffmpeg.Error as e:
         shutil.rmtree(video_dir, ignore_errors=True)
         raise HTTPException(
@@ -175,6 +183,7 @@ async def upload_video(file: UploadFile = File(...)):
     # Clean up original to save space
     original_path.unlink(missing_ok=True)
 
+    print(f"[upload] Done — video_id={video_id}, duration={duration:.1f}s", flush=True)
     return {"video_id": video_id, "duration": duration}
 
 
@@ -195,6 +204,17 @@ async def upload_srt(file: UploadFile = File(...)):
         return {"subtitles": subtitles}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse SRT file: {e}")
+
+
+@app.get("/api/audio/{video_id}")
+async def stream_audio(video_id: str):
+    """
+    Serve the extracted 16kHz mono WAV audio for the waveform visualizer.
+    """
+    audio_path = get_video_dir(video_id) / "audio.wav"
+    if not audio_path.exists():
+        raise HTTPException(status_code=404, detail="Audio not found")
+    return FileResponse(str(audio_path), media_type="audio/wav")
 
 
 @app.get("/api/video/{video_id}")
@@ -240,6 +260,9 @@ async def transcribe_video(
     if model not in valid_models:
         model = "base"
 
+    lang_info = f", language={language}" if language and language != "auto" else ", auto-detect"
+    print(f"[transcribe] Starting — video_id={video_id}, model={model}{lang_info}", flush=True)
+
     async def event_generator():
         queue: asyncio.Queue = asyncio.Queue()
         done_event = asyncio.Event()
@@ -273,12 +296,14 @@ async def transcribe_video(
                     continue
 
                 if isinstance(item, Exception):
+                    print(f"[transcribe] ERROR: {item}", flush=True)
                     yield {"data": json.dumps({"type": "error", "message": str(item)})}
                     break
 
                 segments_so_far, is_done = item
 
                 if is_done:
+                    print(f"[transcribe] Complete — {len(segments_so_far)} segments", flush=True)
                     yield {"data": json.dumps({"type": "done", "subtitles": segments_so_far})}
                     break
                 else:
@@ -302,6 +327,7 @@ async def transcribe_video(
 class TranslateRequest(BaseModel):
     subtitles: list
     target_language: str
+    source_language: Optional[str] = None
 
 
 @app.post("/api/translate")
@@ -315,6 +341,9 @@ async def translate_video_subtitles(request: TranslateRequest):
     """
     subtitles = request.subtitles
     target_language = request.target_language
+    source_language = request.source_language
+
+    print(f"[translate] Request — {len(subtitles)} subtitles, target={target_language}, source={source_language or 'auto'}", flush=True)
 
     async def event_generator():
         queue: asyncio.Queue = asyncio.Queue()
@@ -325,7 +354,7 @@ async def translate_video_subtitles(request: TranslateRequest):
 
         async def run_translation():
             try:
-                result = await translate_subtitles(subtitles, target_language, progress_callback)
+                result = await translate_subtitles(subtitles, target_language, progress_callback, source_language)
                 await queue.put({"result": result, "is_done": True})
             except Exception as e:
                 await queue.put({"error": str(e), "is_done": True})

@@ -4,9 +4,10 @@ services:
   backend:
     build: ./backend
     ports:
-      - "8000:8000"
+      - "8050:8050"
     volumes:
       - /tmp/subtitle_uploads:/tmp/subtitle_uploads
+      - whisper_models:/root/.cache/whisper
     environment:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://host.docker.internal:3000/v1}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-sk-placeholder}
@@ -20,7 +21,7 @@ services:
               capabilities: [gpu]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8050/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -33,3 +34,6 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+volumes:
+  whisper_models:

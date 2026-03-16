@@ -2,7 +2,7 @@ import React, { useCallback } from 'react'
 import { secondsToSrtTime } from '../utils/srtExporter.js'
 import { srtTimeToSeconds } from '../utils/srtParser.js'
 
-export default function SubtitleBlock({ subtitle, isSelected, onChange, onDelete, onSelect }) {
+export default function SubtitleBlock({ subtitle, isSelected, isActive, onChange, onDelete, onSelect }) {
   const handleTimeChange = useCallback((field, value) => {
     // Try to parse the time string to seconds
     try {
@@ -27,7 +27,8 @@ export default function SubtitleBlock({ subtitle, isSelected, onChange, onDelete
 
   return (
     <div
-      className={`subtitle-block${isSelected ? ' selected' : ''}`}
+      className={`subtitle-block${isSelected ? ' selected' : ''}${isActive ? ' active' : ''}`}
+      data-id={subtitle.id}
       onClick={onSelect}
     >
       <div className="subtitle-block-header">
@@ -54,6 +55,7 @@ export default function SubtitleBlock({ subtitle, isSelected, onChange, onDelete
         <button
           className="btn-danger"
           onClick={(e) => { e.stopPropagation(); onDelete() }}
+          tabIndex={-1}
           title="Delete subtitle"
         >
           ✕

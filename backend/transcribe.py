@@ -3,6 +3,16 @@ import asyncio
 from typing import List, Dict, Any, Callable, Optional
 from utils import get_device
 
+# Model cache: avoid reloading the same model on every request
+_model_cache: dict = {}
+
+
+def _load_model(model_name: str, device: str):
+    cache_key = (model_name, device)
+    if cache_key not in _model_cache:
+        _model_cache[cache_key] = whisper.load_model(model_name, device=device)
+    return _model_cache[cache_key]
+
 
 async def transcribe_audio(
     audio_path: str,
@@ -11,31 +21,38 @@ async def transcribe_audio(
     progress_callback: Callable,
 ) -> List[Dict[str, Any]]:
     """
-    Load whisper model on detected device, transcribe audio file with word timestamps.
+    Load whisper model on detected device, transcribe audio file.
     Calls progress_callback(segments_so_far, is_done) as segments are streamed.
     Returns list of subtitle dicts: {id, start, end, text}
     """
     device = get_device()
+    print(f"[whisper] Loading model '{model_name}' on device '{device}'...", flush=True)
 
     # Load model in a thread to avoid blocking the event loop
     loop = asyncio.get_event_loop()
     model = await loop.run_in_executor(
-        None, lambda: whisper.load_model(model_name, device=device)
+        None, lambda: _load_model(model_name, device)
     )
+    print(f"[whisper] Model '{model_name}' ready", flush=True)
 
     # Transcribe in executor (blocking call)
+    # Note: word_timestamps=True uses dtw-python which can cause SIGSEGV with CUDA
     transcribe_kwargs = {
         "verbose": False,
-        "word_timestamps": True,
     }
     if language and language.strip() and language.lower() != "auto":
         transcribe_kwargs["language"] = language
+        print(f"[whisper] Transcribing with language='{language}'...", flush=True)
+    else:
+        print(f"[whisper] Transcribing with auto language detection...", flush=True)
 
     result = await loop.run_in_executor(
         None, lambda: model.transcribe(audio_path, **transcribe_kwargs)
     )
 
+    detected_lang = result.get("language", "unknown")
     segments = result.get("segments", [])
+    print(f"[whisper] Transcription done — language='{detected_lang}', {len(segments)} segments", flush=True)
 
     # Convert segments to subtitle dicts
     subtitles = []
