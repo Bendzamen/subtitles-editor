@@ -8,7 +8,7 @@ export default function App() {
   const [videoUrl, setVideoUrl] = useState(null)
   const [subtitles, setSubtitles] = useState([])
   const [duration, setDuration] = useState(0)
-  const [exportFileName, setExportFileName] = useState('subtitles.SubForge.srt')
+  const [exportFileName, setExportFileName] = useState('subtitles.VibeSubs.srt')
 
   function handleUploadComplete({ videoId, videoUrl, subtitles, duration, exportFileName }) {
     setVideoId(videoId)
@@ -25,7 +25,7 @@ export default function App() {
     setVideoUrl(null)
     setSubtitles([])
     setDuration(0)
-    setExportFileName('subtitles.SubForge.srt')
+    setExportFileName('subtitles.VibeSubs.srt')
   }
 
   return (

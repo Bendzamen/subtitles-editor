@@ -97,7 +97,7 @@ export default function EditorPage({
   }, [setSubtitles])
 
   const handleExport = useCallback(() => {
-    downloadSRT(subtitles, exportFileName || 'subtitles.SubForge.srt')
+    downloadSRT(subtitles, exportFileName || 'subtitles.VibeSubs.srt')
   }, [subtitles, exportFileName])
 
   return (

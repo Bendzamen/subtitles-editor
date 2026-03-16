@@ -6,26 +6,33 @@
 }
 
 :root {
-  --bg: #1a1a1a;
-  --bg-panel: #2a2a2a;
-  --bg-panel-dark: #222222;
-  --bg-input: #333333;
-  --bg-hover: #3a3a3a;
-  --text: #e0e0e0;
-  --text-muted: #888888;
-  --text-dim: #aaaaaa;
-  --accent: #4a9eff;
-  --accent-hover: #6ab4ff;
-  --accent-dim: rgba(74, 158, 255, 0.15);
-  --danger: #ff4a4a;
-  --danger-hover: #ff6b6b;
-  --success: #4aff88;
-  --border: #3a3a3a;
-  --border-focus: #4a9eff;
-  --radius: 6px;
-  --radius-lg: 10px;
-  --shadow: 0 2px 8px rgba(0,0,0,0.4);
-  --shadow-lg: 0 8px 32px rgba(0,0,0,0.6);
+  --bg: #0e0e10;
+  --bg-panel: #18181b;
+  --bg-panel-dark: #131316;
+  --bg-surface: #1e1e22;
+  --bg-input: #1e1e22;
+  --bg-hover: #27272b;
+  --text: #ececef;
+  --text-muted: #71717a;
+  --text-dim: #a1a1aa;
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --accent-dim: rgba(99, 102, 241, 0.12);
+  --accent-glow: rgba(99, 102, 241, 0.25);
+  --danger: #ef4444;
+  --danger-hover: #f87171;
+  --success: #34d399;
+  --success-dim: rgba(52, 211, 153, 0.1);
+  --border: rgba(255, 255, 255, 0.06);
+  --border-visible: rgba(255, 255, 255, 0.1);
+  --border-focus: var(--accent);
+  --radius: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
 html, body, #root {
@@ -36,10 +43,12 @@ html, body, #root {
 body {
   background-color: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: 14px;
   line-height: 1.5;
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .app {
@@ -52,18 +61,18 @@ body {
 
 /* ===== SCROLLBAR ===== */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--bg-panel);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 99px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
+  background: rgba(255, 255, 255, 0.15);
 }
 
 /* ===== COMMON COMPONENTS ===== */
@@ -71,45 +80,55 @@ button {
   cursor: pointer;
   border: none;
   border-radius: var(--radius);
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 500;
   font-family: inherit;
-  transition: background 0.15s, color 0.15s, opacity 0.15s;
+  transition: all 0.15s ease;
+  letter-spacing: 0.01em;
 }
 
 button:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: not-allowed;
 }
 
 .btn-primary {
   background: var(--accent);
   color: #fff;
-  padding: 8px 18px;
+  padding: 8px 20px;
   font-weight: 600;
+  border-radius: var(--radius-pill);
+  box-shadow: 0 1px 2px rgba(99, 102, 241, 0.3);
 }
 .btn-primary:hover:not(:disabled) {
   background: var(--accent-hover);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.35);
+  transform: translateY(-0.5px);
 }
 
 .btn-secondary {
-  background: var(--bg-input);
-  color: var(--text);
+  background: var(--bg-surface);
+  color: var(--text-dim);
   padding: 8px 18px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-visible);
+  border-radius: var(--radius-pill);
 }
 .btn-secondary:hover:not(:disabled) {
   background: var(--bg-hover);
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.15);
 }
 
 .btn-danger {
   background: transparent;
-  color: var(--danger);
+  color: var(--text-muted);
   padding: 4px 8px;
   font-size: 12px;
-  border: 1px solid var(--danger);
+  border-radius: var(--radius);
 }
 .btn-danger:hover:not(:disabled) {
-  background: rgba(255, 74, 74, 0.15);
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.1);
 }
 
 .btn-icon {
@@ -118,6 +137,7 @@ button:disabled {
   padding: 4px;
   font-size: 16px;
   line-height: 1;
+  border-radius: var(--radius);
 }
 .btn-icon:hover:not(:disabled) {
   color: var(--text);
@@ -127,18 +147,19 @@ button:disabled {
 input, select, textarea {
   background: var(--bg-input);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-visible);
   border-radius: var(--radius);
-  padding: 7px 10px;
+  padding: 8px 12px;
   font-size: 13px;
   font-family: inherit;
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color 0.2s, box-shadow 0.2s;
   width: 100%;
 }
 
 input:focus, select:focus, textarea:focus {
-  border-color: var(--border-focus);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
 }
 
 select option {
@@ -153,14 +174,15 @@ select option {
   justify-content: center;
   min-height: 100vh;
   padding: 40px 20px;
-  gap: 24px;
+  gap: 16px;
 }
 
 .upload-title {
-  font-size: 28px;
+  font-size: 32px;
   font-weight: 700;
   color: var(--text);
   text-align: center;
+  letter-spacing: -0.02em;
 }
 
 .upload-subtitle {
@@ -171,23 +193,24 @@ select option {
 
 .upload-card {
   background: var(--bg-panel);
-  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
   padding: 32px;
   width: 100%;
-  max-width: 560px;
+  max-width: 540px;
   box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 18px;
 }
 
 .drop-zone {
-  border: 2px dashed var(--border);
+  border: 2px dashed rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-lg);
-  padding: 40px 20px;
+  padding: 44px 20px;
   text-align: center;
   cursor: pointer;
-  transition: border-color 0.2s, background 0.2s;
+  transition: all 0.2s ease;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -200,12 +223,13 @@ select option {
 }
 
 .drop-zone-icon {
-  font-size: 40px;
+  font-size: 36px;
   line-height: 1;
+  opacity: 0.8;
 }
 
 .drop-zone-text {
-  font-size: 15px;
+  font-size: 14px;
   color: var(--text-dim);
 }
 
@@ -216,7 +240,7 @@ select option {
 
 .drop-zone-filename {
   font-size: 14px;
-  color: var(--accent);
+  color: var(--accent-hover);
   font-weight: 500;
   max-width: 100%;
   overflow: hidden;
@@ -237,10 +261,10 @@ select option {
 }
 
 .form-label {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.06em;
   font-weight: 600;
 }
 
@@ -249,15 +273,15 @@ select option {
   align-items: center;
   gap: 10px;
   background: var(--bg-input);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-visible);
   border-radius: var(--radius);
-  padding: 8px 12px;
+  padding: 9px 14px;
   cursor: pointer;
   transition: border-color 0.15s;
 }
 
 .srt-upload-row:hover {
-  border-color: var(--accent);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 .srt-upload-label {
@@ -270,53 +294,57 @@ select option {
 }
 
 .srt-upload-label.has-file {
-  color: var(--accent);
+  color: var(--accent-hover);
 }
 
 .upload-btn-row {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
+  padding-top: 4px;
 }
 
 .upload-btn-row button {
-  padding: 10px 20px;
-  font-size: 14px;
+  padding: 10px 22px;
+  font-size: 13px;
 }
 
 /* ===== LOADING OVERLAY ===== */
 .loading-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.85);
+  background: rgba(0, 0, 0, 0.88);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   z-index: 1000;
   padding: 40px;
-  gap: 20px;
+  gap: 18px;
 }
 
 .loading-title {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 600;
   color: var(--text);
+  letter-spacing: -0.01em;
 }
 
 .loading-status {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-muted);
   min-height: 20px;
 }
 
 .progress-bar-container {
   width: 100%;
-  max-width: 480px;
-  background: var(--bg-panel);
+  max-width: 420px;
+  background: rgba(255, 255, 255, 0.06);
   border-radius: 99px;
-  height: 8px;
+  height: 5px;
   overflow: hidden;
 }
 
@@ -329,11 +357,12 @@ select option {
 
 .loading-preview {
   width: 100%;
-  max-width: 480px;
+  max-width: 460px;
   background: var(--bg-panel);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 16px;
-  max-height: 200px;
+  padding: 14px;
+  max-height: 180px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -344,7 +373,7 @@ select option {
   font-size: 13px;
   color: var(--text-dim);
   border-left: 2px solid var(--accent);
-  padding-left: 8px;
+  padding-left: 10px;
 }
 
 .loading-preview-time {
@@ -359,23 +388,25 @@ select option {
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  background: var(--bg);
 }
 
 .editor-toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 16px;
-  background: var(--bg-panel-dark);
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
 .editor-toolbar-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--text-dim);
   margin-right: auto;
+  letter-spacing: -0.01em;
 }
 
 .editor-main {
@@ -393,7 +424,7 @@ select option {
   overflow: hidden;
 }
 
-/* Video area */
+/* ===== VIDEO AREA ===== */
 .video-wrapper {
   flex: 1;
   min-width: 0;
@@ -403,7 +434,9 @@ select option {
   justify-content: center;
   position: relative;
   overflow: hidden;
-  border-right: 1px solid var(--border);
+  margin: 6px;
+  margin-right: 3px;
+  border-radius: var(--radius-lg);
 }
 
 .video-wrapper video {
@@ -412,50 +445,56 @@ select option {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  border-radius: var(--radius-lg);
 }
 
 /* Subtitle text overlay on the video */
 .subtitle-overlay {
   position: absolute;
-  bottom: 52px;
+  bottom: 56px;
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(0, 0, 0, 0.78);
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   color: #fff;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 500;
-  padding: 5px 16px;
-  border-radius: 4px;
+  padding: 6px 18px;
+  border-radius: var(--radius);
   text-align: center;
   max-width: 80%;
   pointer-events: none;
   white-space: pre-line;
-  line-height: 1.4;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  line-height: 1.45;
+  letter-spacing: 0.01em;
 }
 
-/* Subtitle list panel */
+/* ===== SUBTITLE LIST PANEL ===== */
 .editor-right {
-  width: 340px;
+  width: 360px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   background: var(--bg-panel);
+  margin: 6px;
+  margin-left: 3px;
+  border-radius: var(--radius-lg);
 }
 
-/* When there's no video, the subtitle list expands to full width */
 .editor-right.editor-right-full {
   width: 100%;
   flex: 1;
+  margin-left: 6px;
 }
 
 .subtitle-list-header {
-  padding: 10px 16px;
-  font-size: 12px;
+  padding: 12px 16px;
+  font-size: 11px;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.06em;
   font-weight: 600;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
@@ -475,44 +514,50 @@ select option {
 
 /* ===== SUBTITLE BLOCK ===== */
 .subtitle-block {
-  background: var(--bg-panel-dark);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px 12px;
+  background: var(--bg-surface);
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  transition: border-color 0.15s, background 0.15s;
+  gap: 8px;
+  transition: all 0.15s ease;
   cursor: pointer;
+}
+
+.subtitle-block:hover {
+  background: var(--bg-hover);
 }
 
 .subtitle-block.selected {
   border-color: var(--accent);
   background: var(--accent-dim);
+  box-shadow: 0 0 0 1px var(--accent-glow);
 }
 
-/* Highlighted when video playhead is inside this subtitle */
 .subtitle-block.active {
-  border-color: #4aff88;
-  background: rgba(74, 255, 136, 0.08);
+  border-color: var(--success);
+  background: var(--success-dim);
 }
 
 .subtitle-block.selected.active {
   border-color: var(--accent);
   background: var(--accent-dim);
+  box-shadow: 0 0 0 1px var(--accent-glow);
 }
 
 .subtitle-block-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .subtitle-block-id {
   font-size: 11px;
   color: var(--text-muted);
   font-weight: 700;
-  min-width: 22px;
+  min-width: 24px;
+  font-variant-numeric: tabular-nums;
 }
 
 .subtitle-block-times {
@@ -523,11 +568,14 @@ select option {
 }
 
 .subtitle-block-times input {
-  width: 78px;
-  padding: 3px 6px;
+  width: 82px;
+  padding: 4px 6px;
   font-size: 11px;
-  font-family: 'Courier New', monospace;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Courier New', monospace;
   text-align: center;
+  border-radius: 8px;
+  background: var(--bg-panel-dark);
+  border: 1px solid var(--border);
 }
 
 .subtitle-block-times span {
@@ -537,27 +585,37 @@ select option {
 
 .subtitle-block-text {
   resize: vertical;
-  min-height: 44px;
+  min-height: 42px;
   font-size: 13px;
-  line-height: 1.4;
-  padding: 6px 8px;
+  line-height: 1.45;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-panel-dark);
+  border: 1px solid var(--border);
 }
 
-/* ===== WAVEFORM SECTION (bottom, full width) ===== */
+.subtitle-block-text:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+/* ===== WAVEFORM SECTION ===== */
 .waveform-section {
   height: 160px;
   flex-shrink: 0;
-  background: var(--bg-panel-dark);
-  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  margin: 0 6px 6px;
+  border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .waveform-controls {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 12px;
+  padding: 5px 14px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -577,6 +635,7 @@ select option {
   font-size: 11px;
   color: var(--text-muted);
   min-width: 52px;
+  font-variant-numeric: tabular-nums;
 }
 
 .waveform-inner {
@@ -597,4 +656,9 @@ input[type="range"].waveform-zoom-slider {
   background: transparent;
   width: 140px;
   accent-color: var(--accent);
+  box-shadow: none;
+}
+
+input[type="range"].waveform-zoom-slider:focus {
+  box-shadow: none;
 }
