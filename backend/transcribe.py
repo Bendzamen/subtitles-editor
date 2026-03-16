@@ -36,15 +36,20 @@ async def transcribe_audio(
     print(f"[whisper] Model '{model_name}' ready", flush=True)
 
     # Transcribe in executor (blocking call)
-    # Note: word_timestamps=True uses dtw-python which can cause SIGSEGV with CUDA
+    use_fp16 = (device == "cuda")
     transcribe_kwargs = {
         "verbose": False,
+        "fp16": use_fp16,
+        "no_speech_threshold": 0.65,
+        "compression_ratio_threshold": 2.4,
+        "condition_on_previous_text": False,
+        "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
     }
     if language and language.strip() and language.lower() != "auto":
         transcribe_kwargs["language"] = language
-        print(f"[whisper] Transcribing with language='{language}'...", flush=True)
+        print(f"[whisper] Transcribing with language='{language}', fp16={use_fp16}...", flush=True)
     else:
-        print(f"[whisper] Transcribing with auto language detection...", flush=True)
+        print(f"[whisper] Transcribing with auto language detection, fp16={use_fp16}...", flush=True)
 
     result = await loop.run_in_executor(
         None, lambda: model.transcribe(audio_path, **transcribe_kwargs)

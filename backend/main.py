@@ -12,12 +12,18 @@ import ffmpeg
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from utils import parse_srt, format_srt
 from transcribe import transcribe_audio
 from translate import translate_subtitles
+
+# --- OpenAI / translation config ---
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "http://localhost:3000/v1")
+OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY",  "sk-placeholder")
+OPENAI_MODEL    = os.getenv("OPENAI_MODEL",     "gpt-4o-mini")
 
 # --- Configuration ---
 UPLOAD_DIR = Path("/tmp/subtitle_uploads")
@@ -54,11 +60,46 @@ def cleanup_old_files():
             print(f"Cleanup error for {item}: {e}")
 
 
+async def _check_openai_endpoint():
+    """
+    Verify the configured OpenAI-compatible endpoint is reachable and that
+    the requested model is listed.  Runs once in the background at startup.
+    Results are informational only — the server starts regardless.
+    """
+    print(f"[startup] Checking OpenAI endpoint: {OPENAI_BASE_URL}", flush=True)
+    print(f"[startup] Expected model: {OPENAI_MODEL}", flush=True)
+    try:
+        client = AsyncOpenAI(
+            base_url=OPENAI_BASE_URL,
+            api_key=OPENAI_API_KEY,
+            timeout=15.0,          # don't hang forever at startup
+        )
+        models_page = await client.models.list()
+        available = [m.id for m in models_page.data]
+
+        if OPENAI_MODEL in available:
+            print(f"[startup] ✓ OpenAI endpoint OK — model '{OPENAI_MODEL}' is available", flush=True)
+        else:
+            print(f"[startup] ⚠ OpenAI endpoint reachable but model '{OPENAI_MODEL}' was NOT found!", flush=True)
+            if available:
+                shown = available[:10]
+                print(f"[startup]   Available models: {', '.join(shown)}"
+                      + (" …" if len(available) > 10 else ""), flush=True)
+            else:
+                print(f"[startup]   No models returned by the endpoint.", flush=True)
+            print(f"[startup]   Set OPENAI_MODEL in docker-compose.yml to one of the listed IDs.", flush=True)
+
+    except Exception as e:
+        print(f"[startup] ✗ OpenAI endpoint check FAILED: {e}", flush=True)
+        print(f"[startup]   URL: {OPENAI_BASE_URL}", flush=True)
+        print(f"[startup]   Translation will not work until the endpoint is reachable.", flush=True)
+
+
 @app.on_event("startup")
 async def startup_event():
     print("[startup] Subtitle Generator API starting up", flush=True)
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, cleanup_old_files)
+    asyncio.get_event_loop().run_in_executor(None, cleanup_old_files)
+    asyncio.create_task(_check_openai_endpoint())
 
 
 # --- Helper: get video directory ---

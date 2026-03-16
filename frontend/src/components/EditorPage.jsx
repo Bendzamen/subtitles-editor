@@ -9,6 +9,7 @@ export default function EditorPage({
   subtitles,
   setSubtitles,
   duration,
+  exportFileName,
   onBack,
 }) {
   const videoRef = useRef(null)
@@ -96,8 +97,8 @@ export default function EditorPage({
   }, [setSubtitles])
 
   const handleExport = useCallback(() => {
-    downloadSRT(subtitles, 'subtitles.srt')
-  }, [subtitles])
+    downloadSRT(subtitles, exportFileName || 'subtitles.SubForge.srt')
+  }, [subtitles, exportFileName])
 
   return (
     <div className="editor-page">

@@ -8,12 +8,14 @@ export default function App() {
   const [videoUrl, setVideoUrl] = useState(null)
   const [subtitles, setSubtitles] = useState([])
   const [duration, setDuration] = useState(0)
+  const [exportFileName, setExportFileName] = useState('subtitles.SubForge.srt')
 
-  function handleUploadComplete({ videoId, videoUrl, subtitles, duration }) {
+  function handleUploadComplete({ videoId, videoUrl, subtitles, duration, exportFileName }) {
     setVideoId(videoId)
     setVideoUrl(videoUrl)
     setSubtitles(subtitles)
     setDuration(duration)
+    setExportFileName(exportFileName)
     setPage('editor')
   }
 
@@ -23,6 +25,7 @@ export default function App() {
     setVideoUrl(null)
     setSubtitles([])
     setDuration(0)
+    setExportFileName('subtitles.SubForge.srt')
   }
 
   return (
@@ -37,6 +40,7 @@ export default function App() {
           subtitles={subtitles}
           setSubtitles={setSubtitles}
           duration={duration}
+          exportFileName={exportFileName}
           onBack={handleBack}
         />
       )}

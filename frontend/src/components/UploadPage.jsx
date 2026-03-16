@@ -184,6 +184,15 @@ export default function UploadPage({ onComplete }) {
     if (file) setSrtFile(file)
   }, [])
 
+  // ── Export filename ─────────────────────────────────────────────────────────
+
+  function buildExportFileName() {
+    const source = videoFile || srtFile
+    if (!source) return 'subtitles.SubForge.srt'
+    const base = source.name.replace(/\.[^/.]+$/, '') // strip extension
+    return `${base}.SubForge.srt`
+  }
+
   // ── Shared helpers ──────────────────────────────────────────────────────────
 
   async function uploadVideo(onProgress) {
@@ -286,7 +295,7 @@ export default function UploadPage({ onComplete }) {
         let finalSubtitles = subtitles
         if (targetLanguage) finalSubtitles = await runTranslation(subtitles, targetLanguage, sourceLanguage)
         setIsLoading(false)
-        onComplete({ videoId, videoUrl, subtitles: finalSubtitles, duration })
+        onComplete({ videoId, videoUrl, subtitles: finalSubtitles, duration, exportFileName: buildExportFileName() })
         return
       }
 
@@ -330,7 +339,7 @@ export default function UploadPage({ onComplete }) {
 
       setLoadingProgress(100)
       setIsLoading(false)
-      onComplete({ videoId, videoUrl, subtitles: finalSubtitles, duration })
+      onComplete({ videoId, videoUrl, subtitles: finalSubtitles, duration, exportFileName: buildExportFileName() })
 
     } catch (err) {
       console.error(err)
@@ -373,7 +382,7 @@ export default function UploadPage({ onComplete }) {
 
       setLoadingProgress(100)
       setIsLoading(false)
-      onComplete({ videoId, videoUrl, subtitles: finalSubtitles, duration })
+      onComplete({ videoId, videoUrl, subtitles: finalSubtitles, duration, exportFileName: buildExportFileName() })
 
     } catch (err) {
       console.error(err)
@@ -387,7 +396,7 @@ export default function UploadPage({ onComplete }) {
   const handleStartEmpty = useCallback(async () => {
     if (!videoFile) {
       // No video — open editor with empty subtitles immediately
-      onComplete({ videoId: null, videoUrl: null, subtitles: [], duration: 0 })
+      onComplete({ videoId: null, videoUrl: null, subtitles: [], duration: 0, exportFileName: buildExportFileName() })
       return
     }
 
@@ -406,7 +415,7 @@ export default function UploadPage({ onComplete }) {
 
       setLoadingProgress(100)
       setIsLoading(false)
-      onComplete({ videoId, videoUrl, subtitles: [], duration })
+      onComplete({ videoId, videoUrl, subtitles: [], duration, exportFileName: buildExportFileName() })
 
     } catch (err) {
       console.error(err)

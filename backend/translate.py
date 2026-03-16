@@ -19,6 +19,7 @@ async def translate_subtitles(
     client = AsyncOpenAI(
         base_url=os.getenv("OPENAI_BASE_URL", "http://localhost:3000/v1"),
         api_key=os.getenv("OPENAI_API_KEY", "sk-placeholder"),
+        timeout=120.0,   # 2-minute hard cap per batch request
     )
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
