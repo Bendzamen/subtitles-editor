@@ -7,7 +7,7 @@ services:
       - "8050:8050"
     volumes:
       - /tmp/subtitle_uploads:/tmp/subtitle_uploads
-      - whisper_models:/root/.cache/whisper
+      - whisper_models:/root/.cache/whisper_models
     environment:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://host.docker.internal:3000/v1}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-sk-placeholder}

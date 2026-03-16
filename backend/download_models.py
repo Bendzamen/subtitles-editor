@@ -1,38 +1,32 @@
 """
-Download all Whisper models to the local cache on first run.
-Uses Whisper's built-in SHA256 verification: existing files that pass the
-checksum are skipped; missing or corrupted files are re-downloaded.
+Download all faster-whisper models to the local cache on first run.
+Subsequent starts verify the cache and skip downloading.
 """
 
 import os
-import whisper
+from faster_whisper import WhisperModel
 
-CACHE_DIR = os.path.expanduser("~/.cache/whisper")
-os.makedirs(CACHE_DIR, exist_ok=True)
+MODELS_DIR = "/root/.cache/whisper_models"
+os.makedirs(MODELS_DIR, exist_ok=True)
 
-MODELS = ["tiny", "base", "small", "medium", "large"]
+MODELS = {
+    "tiny": "tiny",
+    "base": "base",
+    "small": "small",
+    "medium": "medium",
+    "large": "large-v3",
+}
 
-print("=== Whisper model cache check ===", flush=True)
-for model_name in MODELS:
-    url = whisper._MODELS.get(model_name)
-    if not url:
-        print(f"  [?] Unknown model name: {model_name}", flush=True)
-        continue
-
-    filename = os.path.basename(url)
-    model_path = os.path.join(CACHE_DIR, filename)
-
-    if os.path.exists(model_path):
-        print(f"  [✓] {model_name} ({filename}) — verifying checksum...", flush=True)
-    else:
-        print(f"  [↓] {model_name} ({filename}) — downloading...", flush=True)
-
+print("=== Faster-Whisper model cache check ===", flush=True)
+for label, fw_name in MODELS.items():
+    print(f"  [{label}] Loading '{fw_name}'...", flush=True)
     try:
-        # _download checks SHA256 of existing files; re-downloads if missing or corrupt
-        whisper._download(url, CACHE_DIR, in_memory=False)
-        size_mb = os.path.getsize(model_path) // (1024 * 1024)
-        print(f"       OK ({size_mb} MB)", flush=True)
+        # Instantiating triggers the HuggingFace download if not cached.
+        # Use CPU + int8 to minimise memory during the download-only phase.
+        model = WhisperModel(fw_name, device="cpu", compute_type="int8", download_root=MODELS_DIR)
+        del model
+        print(f"  [✓] {label} — ready", flush=True)
     except Exception as e:
-        print(f"  [!] {model_name}: {e}", flush=True)
+        print(f"  [!] {label}: {e}", flush=True)
 
 print("=== Model cache check complete ===", flush=True)

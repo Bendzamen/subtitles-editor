@@ -1,9 +1,8 @@
 fastapi
 uvicorn[standard]
 python-multipart
-openai-whisper
+faster-whisper
 ffmpeg-python
 openai
 aiofiles
 sse-starlette
-torch

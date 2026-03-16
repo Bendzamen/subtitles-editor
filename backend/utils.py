@@ -1,14 +1,15 @@
 import re
-import torch
 from typing import List, Dict, Any
 
 
 def get_device() -> str:
-    """Detect the best available compute device: cuda > mps > cpu"""
-    if torch.cuda.is_available():
-        return "cuda"
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return "mps"
+    """Detect the best available compute device: cuda > cpu"""
+    try:
+        import ctranslate2
+        if ctranslate2.get_cuda_device_count() > 0:
+            return "cuda"
+    except (ImportError, Exception):
+        pass
     return "cpu"
 
 
