@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+python-multipart
+openai-whisper
+ffmpeg-python
+openai
+aiofiles
+sse-starlette
+torch
