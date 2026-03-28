@@ -35,6 +35,8 @@ def _srt_time_to_seconds(time_str: str) -> float:
     m = int(parts[1])
     s_parts = parts[2].split(".")
     s = int(s_parts[0])
+    if m >= 60 or s >= 60:
+        raise ValueError(f"Invalid timecode: {time_str}")
     ms = int(s_parts[1]) if len(s_parts) > 1 else 0
     # Normalize ms to 3 digits
     ms_str = s_parts[1] if len(s_parts) > 1 else "0"
@@ -79,8 +81,11 @@ def parse_srt(content: str) -> List[Dict[str, Any]]:
         if not timecode_match:
             continue
 
-        start = _srt_time_to_seconds(timecode_match.group(1))
-        end = _srt_time_to_seconds(timecode_match.group(2))
+        try:
+            start = _srt_time_to_seconds(timecode_match.group(1))
+            end = _srt_time_to_seconds(timecode_match.group(2))
+        except ValueError:
+            continue
 
         # Remaining lines: text
         text = "\n".join(lines[2:]).strip()

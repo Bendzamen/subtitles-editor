@@ -44,5 +44,5 @@ export function srtTimeToSeconds(timeStr) {
   const m = parseInt(parts[1], 10)
   const s = parseInt(parts[2], 10)
   const ms = parseInt(msStr.padEnd(3, '0').slice(0, 3), 10)
-  return h * 3600 + m * 60 + s + ms / 1000
+  return parseFloat((h * 3600 + m * 60 + s + ms / 1000).toFixed(3))
 }

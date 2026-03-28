@@ -189,7 +189,9 @@ export default function UploadPage({ onComplete }) {
   function buildExportFileName() {
     const source = videoFile || srtFile
     if (!source) return 'subtitles.VibeSubs.srt'
-    const base = source.name.replace(/\.[^/.]+$/, '') // strip extension
+    const base = source.name
+      .replace(/\.[^/.]+$/, '')
+      .replace(/[^a-zA-Z0-9_\-]/g, '_')
     return `${base}.VibeSubs.srt`
   }
 
