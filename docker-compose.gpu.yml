@@ -2,9 +2,6 @@
 #   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
 #
 # Without this file the backend runs on CPU (int8) automatically.
-
-version: '3.8'
-
 services:
   backend:
     deploy:

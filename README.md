@@ -1,7 +1,7 @@
 # Vibing subtitles
 Fancy vibe-coded web subtitle generator and editor bcs I had to procrastinate doing something.
 
-## How to use
+# How to use
 ![image](images/startpage.png)
 
 There's a variety of options to select from:
@@ -25,6 +25,27 @@ Upload the subtitles file and optionally the source video, set the desired langu
 In the edit page you have video preview, scrollable audio vaweform and sidebar with the subtitles parts. You can add, edit, delete the subtitles in the sidebar and change timing in the waveform overlay.
 
 To export the subtitles, just select `Export SRT`
+
+
+# Self-deploy
+Just clone this repo and you can run the project locally / on your own server.
+
+Create your own `.env` file and update the values as desired:
+```bash
+cp .env.example .env
+```
+
+### Without CUDA capable GPU
+```bash
+docker compose up -d --build
+```
+
+### With CUDA capable GPU
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
+
+If you want to make it available through a domain, uncomment the cloudflared section in [docker compose](./docker-compose.yml) and add your domain and TUNNEL_TOKEN to `.env` file.
 
 
 ## Disclaimer
