@@ -1,8 +1,13 @@
 import os
 import json
 import asyncio
-from typing import List, Dict, Any, Callable, Optional
+from typing import List, Dict, Any, Callable, Optional, Tuple
+
 from openai import AsyncOpenAI
+
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 async def translate_subtitles(
@@ -10,11 +15,11 @@ async def translate_subtitles(
     target_language: str,
     progress_callback: Callable,
     source_language: Optional[str] = None,
-) -> List[Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], List[int]]:
     """
     Use OpenAI-compatible API to translate subtitle texts in batches of 20.
     Calls progress_callback(done_count, total) after each batch.
-    Returns translated subtitles list (same structure, only text changed).
+    Returns (translated_subtitles, failed_batch_numbers).
     """
     client = AsyncOpenAI(
         base_url=os.getenv("OPENAI_BASE_URL", "http://localhost:3000/v1"),
@@ -23,9 +28,10 @@ async def translate_subtitles(
     )
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-    batch_size = 20
+    batch_size = int(os.getenv("TRANSLATE_BATCH_SIZE", "20"))
     total = len(subtitles)
     translated = list(subtitles)  # copy
+    failed_batches: List[int] = []
 
     # Build source language context for the prompt
     if source_language and source_language.strip() and source_language.lower() not in ("auto", "auto-detect", ""):
@@ -33,7 +39,7 @@ async def translate_subtitles(
     else:
         source_info = ""
 
-    print(f"[translate] Starting translation of {total} subtitles{source_info} → {target_language}", flush=True)
+    logger.info("Translation starting: count=%d%s target=%s", total, source_info, target_language)
 
     for batch_start in range(0, total, batch_size):
         batch_end = min(batch_start + batch_size, total)
@@ -41,7 +47,7 @@ async def translate_subtitles(
         batch_num = batch_start // batch_size + 1
         total_batches = (total + batch_size - 1) // batch_size
 
-        print(f"[translate] Batch {batch_num}/{total_batches} (subtitles {batch_start + 1}–{batch_end})", flush=True)
+        logger.info("Batch %d/%d: subtitles %d–%d", batch_num, total_batches, batch_start + 1, batch_end)
 
         # Build the batch text for translation
         lines = []
@@ -101,14 +107,15 @@ async def translate_subtitles(
                     translated[i]["text"] = id_to_text[sub_id]
                     applied += 1
 
-            print(f"[translate] Batch {batch_num}/{total_batches} done — {applied}/{len(batch)} translated", flush=True)
+            logger.info("Batch %d/%d done: %d/%d translated", batch_num, total_batches, applied, len(batch))
 
         except Exception as e:
-            print(f"[translate] Batch {batch_num}/{total_batches} ERROR: {e}", flush=True)
+            logger.error("Batch %d/%d failed: %s", batch_num, total_batches, e)
+            failed_batches.append(batch_num)
 
         done_count = batch_end
         await progress_callback(done_count, total)
         await asyncio.sleep(0.05)
 
-    print(f"[translate] Translation complete — {total} subtitles processed", flush=True)
-    return translated
+    logger.info("Translation complete: total=%d failed_batches=%s", total, failed_batches or "none")
+    return translated, failed_batches

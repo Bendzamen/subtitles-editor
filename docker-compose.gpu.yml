@@ -1,0 +1,16 @@
+# GPU override — use alongside the base compose file:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+#
+# Without this file the backend runs on CPU (int8) automatically.
+
+version: '3.8'
+
+services:
+  backend:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

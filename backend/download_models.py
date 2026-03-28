@@ -6,7 +6,7 @@ Subsequent starts verify the cache and skip downloading.
 import os
 from faster_whisper import WhisperModel
 
-MODELS_DIR = "/root/.cache/whisper_models"
+MODELS_DIR = "/models"
 os.makedirs(MODELS_DIR, exist_ok=True)
 
 MODELS = {

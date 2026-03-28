@@ -4,7 +4,6 @@ import json
 import asyncio
 import shutil
 import time
-import logging
 from pathlib import Path
 from typing import Optional
 from uuid import UUID
@@ -22,11 +21,12 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from sse_starlette.sse import EventSourceResponse
 
+from logger import get_logger
 from utils import parse_srt, format_srt
 from transcribe import transcribe_audio
 from translate import translate_subtitles
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # --- OpenAI / translation config ---
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "http://localhost:3000/v1")
@@ -36,7 +36,7 @@ OPENAI_MODEL    = os.getenv("OPENAI_MODEL",     "gpt-4o-mini")
 # --- Configuration ---
 UPLOAD_DIR = Path("/tmp/subtitle_uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-MAX_FILE_AGE_SECONDS = 3600  # 1 hour
+MAX_FILE_AGE_SECONDS = 600  # 10 minutes
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "http://localhost:5173")
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
 ALLOWED_MIME = {
@@ -74,7 +74,7 @@ def cleanup_old_files():
                 else:
                     item.unlink(missing_ok=True)
         except Exception as e:
-            print(f"Cleanup error for {item}: {e}")
+            logger.warning("Cleanup error for %s: %s", item, e)
 
 
 async def _check_openai_endpoint():
@@ -83,38 +83,36 @@ async def _check_openai_endpoint():
     the requested model is listed.  Runs once in the background at startup.
     Results are informational only — the server starts regardless.
     """
-    print(f"[startup] Checking OpenAI endpoint: {OPENAI_BASE_URL}", flush=True)
-    print(f"[startup] Expected model: {OPENAI_MODEL}", flush=True)
+    logger.info("Checking OpenAI endpoint: %s", OPENAI_BASE_URL)
+    logger.info("Expected model: %s", OPENAI_MODEL)
     try:
         client = AsyncOpenAI(
             base_url=OPENAI_BASE_URL,
             api_key=OPENAI_API_KEY,
-            timeout=15.0,          # don't hang forever at startup
+            timeout=15.0,
         )
         models_page = await client.models.list()
         available = [m.id for m in models_page.data]
 
         if OPENAI_MODEL in available:
-            print(f"[startup] ✓ OpenAI endpoint OK — model '{OPENAI_MODEL}' is available", flush=True)
+            logger.info("OpenAI endpoint OK — model '%s' is available", OPENAI_MODEL)
         else:
-            print(f"[startup] ⚠ OpenAI endpoint reachable but model '{OPENAI_MODEL}' was NOT found!", flush=True)
+            logger.warning("OpenAI endpoint reachable but model '%s' was NOT found", OPENAI_MODEL)
             if available:
                 shown = available[:10]
-                print(f"[startup]   Available models: {', '.join(shown)}"
-                      + (" …" if len(available) > 10 else ""), flush=True)
+                logger.info("Available models: %s%s", ", ".join(shown), " …" if len(available) > 10 else "")
             else:
-                print(f"[startup]   No models returned by the endpoint.", flush=True)
-            print(f"[startup]   Set OPENAI_MODEL in docker-compose.yml to one of the listed IDs.", flush=True)
+                logger.info("No models returned by the endpoint")
+            logger.info("Set OPENAI_MODEL in docker-compose.yml to one of the listed IDs")
 
     except Exception as e:
-        print(f"[startup] ✗ OpenAI endpoint check FAILED: {e}", flush=True)
-        print(f"[startup]   URL: {OPENAI_BASE_URL}", flush=True)
-        print(f"[startup]   Translation will not work until the endpoint is reachable.", flush=True)
+        logger.error("OpenAI endpoint check FAILED: %s — URL: %s", e, OPENAI_BASE_URL)
+        logger.error("Translation will not work until the endpoint is reachable")
 
 
 @app.on_event("startup")
 async def startup_event():
-    print("[startup] Subtitle Generator API starting up", flush=True)
+    logger.info("Subtitle Generator API starting up")
     asyncio.get_event_loop().run_in_executor(None, cleanup_old_files)
     asyncio.create_task(_check_openai_endpoint())
 
@@ -160,7 +158,7 @@ async def upload_video(request: Request, file: UploadFile = File(...)):
     transcoded_path = video_dir / "video.mp4"
     audio_path = video_dir / "audio.wav"
 
-    print(f"[upload] Received file: {file.filename} (video_id={video_id})", flush=True)
+    logger.info("Upload received: filename=%s video_id=%s", file.filename, video_id)
 
     # Save uploaded file with size limit enforcement
     try:
@@ -176,16 +174,16 @@ async def upload_video(request: Request, file: UploadFile = File(...)):
                     shutil.rmtree(video_dir, ignore_errors=True)
                     raise HTTPException(413, "File too large")
                 await out_file.write(chunk)
-        print(f"[upload] File saved (video_id={video_id})", flush=True)
+        logger.info("File saved: video_id=%s size=%d", video_id, total)
     except HTTPException:
         raise
     except Exception as e:
         shutil.rmtree(video_dir, ignore_errors=True)
-        logger.error("Failed to save uploaded file: %s", e)
+        logger.error("Failed to save uploaded file: video_id=%s error=%s", video_id, e)
         raise HTTPException(status_code=500, detail="Upload failed — please try again")
 
     # Transcode video to 480p H264 mp4
-    print(f"[upload] Transcoding to 480p H264...", flush=True)
+    logger.info("Transcoding to 480p H264: video_id=%s", video_id)
     try:
         loop = asyncio.get_event_loop()
 
@@ -208,18 +206,18 @@ async def upload_video(request: Request, file: UploadFile = File(...)):
             )
 
         await loop.run_in_executor(None, transcode_video)
-        print(f"[upload] Transcoding complete", flush=True)
+        logger.info("Transcoding complete: video_id=%s", video_id)
     except ffmpeg.Error as e:
         shutil.rmtree(video_dir, ignore_errors=True)
-        logger.error("Video transcoding failed (video_id=%s): %s", video_id, e.stderr.decode() if e.stderr else str(e))
+        logger.error("Transcoding failed: video_id=%s error=%s", video_id, e.stderr.decode() if e.stderr else str(e))
         raise HTTPException(status_code=500, detail="Video processing failed — please re-upload")
     except Exception as e:
         shutil.rmtree(video_dir, ignore_errors=True)
-        logger.error("Video transcoding failed (video_id=%s): %s", video_id, e)
+        logger.error("Transcoding failed: video_id=%s error=%s", video_id, e)
         raise HTTPException(status_code=500, detail="Video processing failed — please re-upload")
 
     # Extract audio as 16kHz mono wav for whisper
-    print(f"[upload] Extracting 16kHz mono WAV for Whisper...", flush=True)
+    logger.info("Extracting 16kHz mono WAV: video_id=%s", video_id)
     try:
         def extract_audio():
             (
@@ -236,14 +234,14 @@ async def upload_video(request: Request, file: UploadFile = File(...)):
             )
 
         await loop.run_in_executor(None, extract_audio)
-        print(f"[upload] Audio extraction complete", flush=True)
+        logger.info("Audio extraction complete: video_id=%s", video_id)
     except ffmpeg.Error as e:
         shutil.rmtree(video_dir, ignore_errors=True)
-        logger.error("Audio extraction failed (video_id=%s): %s", video_id, e.stderr.decode() if e.stderr else str(e))
+        logger.error("Audio extraction failed: video_id=%s error=%s", video_id, e.stderr.decode() if e.stderr else str(e))
         raise HTTPException(status_code=500, detail="Video processing failed — please re-upload")
     except Exception as e:
         shutil.rmtree(video_dir, ignore_errors=True)
-        logger.error("Audio extraction failed (video_id=%s): %s", video_id, e)
+        logger.error("Audio extraction failed: video_id=%s error=%s", video_id, e)
         raise HTTPException(status_code=500, detail="Video processing failed — please re-upload")
 
     # Get video duration using ffprobe
@@ -260,7 +258,7 @@ async def upload_video(request: Request, file: UploadFile = File(...)):
     # Clean up original to save space
     original_path.unlink(missing_ok=True)
 
-    print(f"[upload] Done — video_id={video_id}, duration={duration:.1f}s", flush=True)
+    logger.info("Upload done: video_id=%s duration=%.1fs", video_id, duration)
     return {"video_id": video_id, "duration": duration}
 
 
@@ -344,7 +342,7 @@ async def transcribe_video(
         model = "base"
 
     lang_info = f", language={language}" if language and language != "auto" else ", auto-detect"
-    print(f"[transcribe] Starting — video_id={video_id}, model={model}{lang_info}", flush=True)
+    logger.info("Transcription start: video_id=%s model=%s%s", video_id, model, lang_info)
 
     async def event_generator():
         queue: asyncio.Queue = asyncio.Queue()
@@ -379,14 +377,14 @@ async def transcribe_video(
                     continue
 
                 if isinstance(item, Exception):
-                    logger.error("[transcribe] ERROR (video_id=%s): %s", video_id, item)
+                    logger.error("Transcription error: video_id=%s error=%s", video_id, item)
                     yield {"data": json.dumps({"type": "error", "message": "Transcription failed — please try again"})}
                     break
 
                 segments_so_far, is_done = item
 
                 if is_done:
-                    print(f"[transcribe] Complete — {len(segments_so_far)} segments", flush=True)
+                    logger.info("Transcription complete: video_id=%s segments=%d", video_id, len(segments_so_far))
                     yield {"data": json.dumps({"type": "done", "subtitles": segments_so_far})}
                     break
                 else:
@@ -420,6 +418,7 @@ async def translate_video_subtitles(http_request: Request, request: TranslateReq
     SSE endpoint to stream translation progress.
     Events:
       {"type": "progress", "done": N, "total": N}
+      {"type": "warning", "message": "..."}   (optional, before done)
       {"type": "done", "subtitles": [...]}
       {"type": "error", "message": "..."}
     """
@@ -427,7 +426,8 @@ async def translate_video_subtitles(http_request: Request, request: TranslateReq
     target_language = request.target_language
     source_language = request.source_language
 
-    print(f"[translate] Request — {len(subtitles)} subtitles, target={target_language}, source={source_language or 'auto'}", flush=True)
+    logger.info("Translation start: count=%d target=%s source=%s",
+                len(subtitles), target_language, source_language or "auto")
 
     async def event_generator():
         queue: asyncio.Queue = asyncio.Queue()
@@ -438,8 +438,10 @@ async def translate_video_subtitles(http_request: Request, request: TranslateReq
 
         async def run_translation():
             try:
-                result = await translate_subtitles(subtitles, target_language, progress_callback, source_language)
-                await queue.put({"result": result, "is_done": True})
+                translated, failed_batches = await translate_subtitles(
+                    subtitles, target_language, progress_callback, source_language
+                )
+                await queue.put({"result": translated, "failed_batches": failed_batches, "is_done": True})
             except Exception as e:
                 await queue.put({"error": str(e), "is_done": True})
             finally:
@@ -459,9 +461,16 @@ async def translate_video_subtitles(http_request: Request, request: TranslateReq
 
                 if item.get("is_done"):
                     if "error" in item:
-                        logger.error("[translate] ERROR: %s", item["error"])
+                        logger.error("Translation error: %s", item["error"])
                         yield {"data": json.dumps({"type": "error", "message": "Translation failed — please try again"})}
                     else:
+                        failed = item.get("failed_batches", [])
+                        if failed:
+                            logger.warning("Translation partial failure: batches=%s", failed)
+                            yield {"data": json.dumps({
+                                "type": "warning",
+                                "message": f"Batches {failed} failed and were skipped",
+                            })}
                         yield {"data": json.dumps({"type": "done", "subtitles": item["result"]})}
                     break
                 else:
@@ -480,3 +489,17 @@ async def translate_video_subtitles(http_request: Request, request: TranslateReq
                 pass
 
     return EventSourceResponse(event_generator())
+
+
+@app.delete("/api/delete/{video_id}")
+@limiter.limit("10/minute")
+async def delete_video(request: Request, video_id: str):
+    """
+    Delete all files associated with a video_id.
+    Called automatically by the frontend after the user exports their SRT.
+    """
+    video_dir = get_video_dir(video_id)
+    if video_dir.exists():
+        shutil.rmtree(video_dir, ignore_errors=True)
+        logger.info("Deleted: video_id=%s", video_id)
+    return {"status": "deleted"}

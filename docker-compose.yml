@@ -7,18 +7,19 @@ services:
       - "8050:8050"
     volumes:
       - /tmp/subtitle_uploads:/tmp/subtitle_uploads
-      - whisper_models:/root/.cache/whisper_models
+      - whisper_models:/models
     environment:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://host.docker.internal:3000/v1}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-sk-placeholder}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
     deploy:
       resources:
+        limits:
+          cpus: '4'
+          memory: 12G
         reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+          cpus: '1'
+          memory: 4G
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8050/health"]
@@ -34,6 +35,24 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  #cloudflared:
+  #  image: cloudflare/cloudflared:2025.8.1
+  #  restart: unless-stopped
+  #  command: tunnel --no-autoupdate run
+  #  environment:
+  #    TUNNEL_TOKEN: "${TUNNEL_TOKEN}"
 
 volumes:
   whisper_models:

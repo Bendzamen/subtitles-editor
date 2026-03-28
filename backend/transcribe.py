@@ -3,7 +3,11 @@ import ctranslate2
 from faster_whisper import WhisperModel
 from typing import List, Dict, Any, Callable, Optional
 
-MODELS_DIR = "/root/.cache/whisper_models"
+from logger import get_logger
+
+logger = get_logger(__name__)
+
+MODELS_DIR = "/models"
 
 # Map frontend model names to faster-whisper model identifiers
 MODEL_MAP = {
@@ -29,7 +33,7 @@ def _load_model(model_name: str):
     if model_name not in _model_cache:
         device, compute_type = _get_device_and_compute()
         fw_name = MODEL_MAP.get(model_name, model_name)
-        print(f"[whisper] Loading faster-whisper model '{fw_name}' on {device} ({compute_type})", flush=True)
+        logger.info("Loading faster-whisper model '%s' on %s (%s)", fw_name, device, compute_type)
         _model_cache[model_name] = WhisperModel(
             fw_name,
             device=device,
@@ -51,11 +55,11 @@ async def transcribe_audio(
     Returns list of subtitle dicts: {id, start, end, text}
     """
     device, compute_type = _get_device_and_compute()
-    print(f"[whisper] Device: {device}, compute: {compute_type}", flush=True)
+    logger.info("Device: %s compute: %s", device, compute_type)
 
     loop = asyncio.get_event_loop()
     model = await loop.run_in_executor(None, lambda: _load_model(model_name))
-    print(f"[whisper] Model '{model_name}' ready", flush=True)
+    logger.info("Model '%s' ready", model_name)
 
     # VAD filter: scans audio for speech regions first, strips silence so
     # Whisper never sees quiet sections and cannot hallucinate into them.
@@ -67,9 +71,9 @@ async def transcribe_audio(
 
     if language and language.strip() and language.lower() != "auto":
         transcribe_kwargs["language"] = language
-        print(f"[whisper] Transcribing with language='{language}'...", flush=True)
+        logger.info("Transcribing with language='%s'", language)
     else:
-        print(f"[whisper] Transcribing with auto language detection...", flush=True)
+        logger.info("Transcribing with auto language detection")
 
     def run_transcribe():
         segments_iter, info = model.transcribe(audio_path, **transcribe_kwargs)
@@ -80,8 +84,8 @@ async def transcribe_audio(
     seg_list, info = await loop.run_in_executor(None, run_transcribe)
 
     detected_lang = info.language
-    print(f"[whisper] Transcription done — language='{detected_lang}', "
-          f"{len(seg_list)} segments, duration={info.duration:.1f}s", flush=True)
+    logger.info("Transcription done: language='%s' segments=%d duration=%.1fs",
+                detected_lang, len(seg_list), info.duration)
 
     # Convert faster-whisper Segment objects to subtitle dicts
     subtitles = []
@@ -100,7 +104,7 @@ async def transcribe_audio(
     for i, sub in enumerate(subtitles):
         sub["id"] = i + 1
 
-    print(f"[whisper] {len(subtitles)} non-empty subtitle segments", flush=True)
+    logger.info("%d non-empty subtitle segments", len(subtitles))
 
     # Stream segments one by one with small delays for progressive UI updates
     streamed_so_far = []

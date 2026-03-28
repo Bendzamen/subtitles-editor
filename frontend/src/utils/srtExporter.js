@@ -21,8 +21,14 @@ export function secondsToSrtTime(seconds) {
 /**
  * Convert an array of subtitle objects to an SRT string.
  * Each object must have: { id, start, end, text }
+ * Throws if any subtitle has start >= end.
  */
 export function exportSRT(subtitles) {
+  const invalid = subtitles.filter(s => s.start >= s.end)
+  if (invalid.length > 0) {
+    throw new Error(`${invalid.length} subtitle(s) have start \u2265 end time`)
+  }
+
   return subtitles
     .map((sub, index) => {
       const id = sub.id ?? index + 1
@@ -36,8 +42,9 @@ export function exportSRT(subtitles) {
 
 /**
  * Create a blob from the SRT content and trigger a browser download.
+ * Optionally deletes the server-side files for videoId after download.
  */
-export function downloadSRT(subtitles, filename = 'subtitles.srt') {
+export async function downloadSRT(subtitles, filename = 'subtitles.srt', videoId = null) {
   const content = exportSRT(subtitles)
   const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
   const url = URL.createObjectURL(blob)
@@ -48,4 +55,12 @@ export function downloadSRT(subtitles, filename = 'subtitles.srt') {
   a.click()
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
+
+  if (videoId) {
+    try {
+      await fetch(`/api/delete/${videoId}`, { method: 'DELETE' })
+    } catch {
+      // ignore — cleanup is best-effort; server TTL will handle it
+    }
+  }
 }

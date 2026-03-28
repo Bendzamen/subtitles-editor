@@ -218,6 +218,13 @@ export default function UploadPage({ onComplete }) {
     setLoadingProgress(90)
 
     return new Promise((resolve, reject) => {
+      const STREAM_TIMEOUT_MS = 10 * 60 * 1000
+      let warning = null
+
+      const timer = setTimeout(() => {
+        reject(new Error('Translation timed out. Please try again.'))
+      }, STREAM_TIMEOUT_MS)
+
       fetch('/api/translate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -227,11 +234,15 @@ export default function UploadPage({ onComplete }) {
           source_language: sourceLang || null,
         }),
       }).then(async (response) => {
-        if (!response.ok) throw new Error(`Translation request failed: ${response.statusText}`)
+        if (!response.ok) {
+          clearTimeout(timer)
+          throw new Error(`Translation request failed: ${response.statusText}`)
+        }
 
         const reader = response.body.getReader()
         const decoder = new TextDecoder()
         let buffer = ''
+        let receivedDone = false
 
         while (true) {
           const { done, value } = await reader.read()
@@ -253,18 +264,27 @@ export default function UploadPage({ onComplete }) {
                 const pct = 90 + ((data.done / data.total) * 9)
                 setLoadingProgress(Math.round(pct))
                 setLoadingStatus(`Translating ${data.done}/${data.total} subtitles...`)
+              } else if (data.type === 'warning') {
+                warning = data.message
               } else if (data.type === 'done') {
-                resolve(data.subtitles)
+                receivedDone = true
+                clearTimeout(timer)
+                resolve({ subtitles: data.subtitles, warning })
                 return
               } else if (data.type === 'error') {
+                clearTimeout(timer)
                 reject(new Error(data.message))
                 return
               }
             } catch { /* skip malformed */ }
           }
         }
-        reject(new Error('Translation stream ended unexpectedly'))
-      }).catch(reject)
+
+        clearTimeout(timer)
+        if (!receivedDone) {
+          reject(new Error('Connection lost before translation completed.'))
+        }
+      }).catch((err) => { clearTimeout(timer); reject(err) })
     })
   }
 
@@ -293,9 +313,14 @@ export default function UploadPage({ onComplete }) {
         setLoadingProgress(80)
         const subtitles = await parseSrtFile()
         let finalSubtitles = subtitles
-        if (targetLanguage) finalSubtitles = await runTranslation(subtitles, targetLanguage, sourceLanguage)
+        let translationWarning = null
+        if (targetLanguage) {
+          const result = await runTranslation(subtitles, targetLanguage, sourceLanguage)
+          finalSubtitles = result.subtitles
+          translationWarning = result.warning
+        }
         setIsLoading(false)
-        onComplete({ videoId, videoUrl, subtitles: finalSubtitles, duration, exportFileName: buildExportFileName() })
+        onComplete({ videoId, videoUrl, subtitles: finalSubtitles, duration, exportFileName: buildExportFileName(), translationWarning })
         return
       }
 
@@ -309,6 +334,13 @@ export default function UploadPage({ onComplete }) {
         if (sourceLanguage) params.append('language', sourceLanguage)
         const es = new EventSource(`/api/transcribe/${videoId}?${params.toString()}`)
 
+        const STREAM_TIMEOUT_MS = 10 * 60 * 1000
+        let receivedDone = false
+        const timer = setTimeout(() => {
+          es.close()
+          reject(new Error('Transcription timed out. Please try again.'))
+        }, STREAM_TIMEOUT_MS)
+
         es.onmessage = (e) => {
           try {
             const data = JSON.parse(e.data)
@@ -318,28 +350,41 @@ export default function UploadPage({ onComplete }) {
               setLoadingProgress(Math.round(Math.min(85, 35 + (data.count * 0.5))))
               setLoadingStatus(`Transcribed ${data.count} segments...`)
             } else if (data.type === 'done') {
+              receivedDone = true
+              clearTimeout(timer)
               es.close()
               setLoadingProgress(90)
               resolve(data.subtitles)
             } else if (data.type === 'error') {
+              clearTimeout(timer)
               es.close()
               reject(new Error(data.message))
             }
           } catch (err) {
+            clearTimeout(timer)
             es.close()
             reject(err)
           }
         }
-        es.onerror = () => { es.close(); reject(new Error('Transcription connection failed')) }
+        es.onerror = () => {
+          clearTimeout(timer)
+          es.close()
+          if (!receivedDone) reject(new Error('Transcription connection failed'))
+        }
       })
 
       // Step 4: Optionally translate
       let finalSubtitles = transcribedSubtitles
-      if (targetLanguage) finalSubtitles = await runTranslation(transcribedSubtitles, targetLanguage, sourceLanguage)
+      let translationWarning = null
+      if (targetLanguage) {
+        const result = await runTranslation(transcribedSubtitles, targetLanguage, sourceLanguage)
+        finalSubtitles = result.subtitles
+        translationWarning = result.warning
+      }
 
       setLoadingProgress(100)
       setIsLoading(false)
-      onComplete({ videoId, videoUrl, subtitles: finalSubtitles, duration, exportFileName: buildExportFileName() })
+      onComplete({ videoId, videoUrl, subtitles: finalSubtitles, duration, exportFileName: buildExportFileName(), translationWarning })
 
     } catch (err) {
       console.error(err)
@@ -378,11 +423,11 @@ export default function UploadPage({ onComplete }) {
       const subtitles = await parseSrtFile()
 
       // Translate
-      const finalSubtitles = await runTranslation(subtitles, targetLanguage, sourceLanguage)
+      const { subtitles: finalSubtitles, warning: translationWarning } = await runTranslation(subtitles, targetLanguage, sourceLanguage)
 
       setLoadingProgress(100)
       setIsLoading(false)
-      onComplete({ videoId, videoUrl, subtitles: finalSubtitles, duration, exportFileName: buildExportFileName() })
+      onComplete({ videoId, videoUrl, subtitles: finalSubtitles, duration, exportFileName: buildExportFileName(), translationWarning })
 
     } catch (err) {
       console.error(err)

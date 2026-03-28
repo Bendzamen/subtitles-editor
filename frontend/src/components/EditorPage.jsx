@@ -10,6 +10,7 @@ export default function EditorPage({
   setSubtitles,
   duration,
   exportFileName,
+  translationWarning,
   onBack,
 }) {
   const videoRef = useRef(null)
@@ -17,6 +18,8 @@ export default function EditorPage({
   const [selectedId, setSelectedId] = useState(null)
   const [activeId, setActiveId] = useState(null)
   const [zoomLevel, setZoomLevel] = useState(50)
+  const [warning, setWarning] = useState(translationWarning || null)
+  const [exportError, setExportError] = useState(null)
   const pendingSelectTimeRef = useRef(null)
 
   const hasVideo = !!videoUrl
@@ -96,9 +99,14 @@ export default function EditorPage({
     })
   }, [setSubtitles])
 
-  const handleExport = useCallback(() => {
-    downloadSRT(subtitles, exportFileName || 'subtitles.VibeSubs.srt')
-  }, [subtitles, exportFileName])
+  const handleExport = useCallback(async () => {
+    setExportError(null)
+    try {
+      await downloadSRT(subtitles, exportFileName || 'subtitles.VibeSubs.srt', videoId)
+    } catch (err) {
+      setExportError(err.message)
+    }
+  }, [subtitles, exportFileName, videoId])
 
   return (
     <div className="editor-page">
@@ -109,6 +117,19 @@ export default function EditorPage({
         <button className="btn-secondary" onClick={handleAddSubtitle}>+ Add Subtitle</button>
         <button className="btn-primary" onClick={handleExport}>Export SRT</button>
       </div>
+
+      {warning && (
+        <div style={{ background: '#7c5700', color: '#ffe082', padding: '8px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 14 }}>
+          <span>Warning: {warning}</span>
+          <button onClick={() => setWarning(null)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: 16 }}>✕</button>
+        </div>
+      )}
+      {exportError && (
+        <div style={{ background: '#7c1a1a', color: '#ffcdd2', padding: '8px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 14 }}>
+          <span>Export failed: {exportError}</span>
+          <button onClick={() => setExportError(null)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: 16 }}>✕</button>
+        </div>
+      )}
 
       <div className="editor-main">
         {/* Top row: video (left, if present) + subtitle list (right) */}

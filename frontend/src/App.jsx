@@ -9,13 +9,15 @@ export default function App() {
   const [subtitles, setSubtitles] = useState([])
   const [duration, setDuration] = useState(0)
   const [exportFileName, setExportFileName] = useState('subtitles.VibeSubs.srt')
+  const [translationWarning, setTranslationWarning] = useState(null)
 
-  function handleUploadComplete({ videoId, videoUrl, subtitles, duration, exportFileName }) {
+  function handleUploadComplete({ videoId, videoUrl, subtitles, duration, exportFileName, translationWarning }) {
     setVideoId(videoId)
     setVideoUrl(videoUrl)
     setSubtitles(subtitles)
     setDuration(duration)
     setExportFileName(exportFileName)
+    setTranslationWarning(translationWarning || null)
     setPage('editor')
   }
 
@@ -26,6 +28,7 @@ export default function App() {
     setSubtitles([])
     setDuration(0)
     setExportFileName('subtitles.VibeSubs.srt')
+    setTranslationWarning(null)
   }
 
   return (
@@ -41,6 +44,7 @@ export default function App() {
           setSubtitles={setSubtitles}
           duration={duration}
           exportFileName={exportFileName}
+          translationWarning={translationWarning}
           onBack={handleBack}
         />
       )}

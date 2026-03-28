@@ -25,7 +25,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN chmod +x /app/start.sh
+RUN chmod +x /app/start.sh \
+    && useradd -r -u 1001 -g root appuser \
+    && mkdir -p /tmp/subtitle_uploads /models \
+    && chown -R appuser /app /tmp/subtitle_uploads /models
+
+USER appuser
 
 EXPOSE 8050
 

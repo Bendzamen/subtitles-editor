@@ -14,6 +14,8 @@ export default function SubtitleBlock({ subtitle, isSelected, isActive, onChange
         seconds = srtTimeToSeconds(value)
       }
       if (!isNaN(seconds) && seconds >= 0) {
+        if (field === 'start' && seconds >= subtitle.end) return
+        if (field === 'end' && seconds <= subtitle.start) return
         onChange({ ...subtitle, [field]: seconds })
       }
     } catch {
