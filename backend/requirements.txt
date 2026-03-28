@@ -6,3 +6,5 @@ ffmpeg-python
 openai
 aiofiles
 sse-starlette
+slowapi==0.1.9
+python-magic==0.4.27

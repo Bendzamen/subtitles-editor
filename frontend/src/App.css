@@ -310,6 +310,22 @@ select option {
   font-size: 13px;
 }
 
+/* ===== GITHUB LINK ===== */
+.upload-github-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-decoration: none;
+  transition: color 0.15s;
+  margin-top: 12px;
+}
+
+.upload-github-link:hover {
+  color: var(--text);
+}
+
 /* ===== LOADING OVERLAY ===== */
 .loading-overlay {
   position: fixed;

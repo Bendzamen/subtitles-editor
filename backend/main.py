@@ -4,21 +4,29 @@ import json
 import asyncio
 import shutil
 import time
+import logging
 from pathlib import Path
 from typing import Optional
+from uuid import UUID
 
 import aiofiles
 import ffmpeg
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, BackgroundTasks
+import magic
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from openai import AsyncOpenAI
 from pydantic import BaseModel
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from sse_starlette.sse import EventSourceResponse
 
 from utils import parse_srt, format_srt
 from transcribe import transcribe_audio
 from translate import translate_subtitles
+
+logger = logging.getLogger(__name__)
 
 # --- OpenAI / translation config ---
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "http://localhost:3000/v1")
@@ -29,16 +37,25 @@ OPENAI_MODEL    = os.getenv("OPENAI_MODEL",     "gpt-4o-mini")
 UPLOAD_DIR = Path("/tmp/subtitle_uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MAX_FILE_AGE_SECONDS = 3600  # 1 hour
+ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "http://localhost:5173")
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
+ALLOWED_MIME = {
+    "video/mp4", "video/x-matroska", "video/webm", "video/quicktime",
+    "video/x-msvideo", "video/mpeg",
+}
 
 # --- FastAPI App ---
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="Subtitle Generator API")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[ALLOWED_ORIGIN],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type"],
 )
 
 
@@ -104,6 +121,10 @@ async def startup_event():
 
 # --- Helper: get video directory ---
 def get_video_dir(video_id: str) -> Path:
+    try:
+        UUID(video_id, version=4)
+    except ValueError:
+        raise HTTPException(400, "Invalid video ID")
     return UPLOAD_DIR / video_id
 
 
@@ -115,13 +136,21 @@ async def health():
 
 
 @app.post("/api/upload")
-async def upload_video(file: UploadFile = File(...)):
+@limiter.limit("10/minute")
+async def upload_video(request: Request, file: UploadFile = File(...)):
     """
     Accept a video file upload.
     - Transcode to 480p H264 mp4 (max 1500k bitrate, aac 128k audio)
     - Extract 16kHz mono wav for whisper
     - Return {video_id, duration}
     """
+    # MIME type validation
+    header = await file.read(2048)
+    mime = magic.from_buffer(header, mime=True)
+    if mime not in ALLOWED_MIME:
+        raise HTTPException(400, "Unsupported file type")
+    await file.seek(0)
+
     video_id = str(uuid.uuid4())
     video_dir = get_video_dir(video_id)
     video_dir.mkdir(parents=True, exist_ok=True)
@@ -133,18 +162,27 @@ async def upload_video(file: UploadFile = File(...)):
 
     print(f"[upload] Received file: {file.filename} (video_id={video_id})", flush=True)
 
-    # Save uploaded file
+    # Save uploaded file with size limit enforcement
     try:
+        total = 0
         async with aiofiles.open(original_path, "wb") as out_file:
             while True:
                 chunk = await file.read(1024 * 1024)  # 1MB chunks
                 if not chunk:
                     break
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    original_path.unlink(missing_ok=True)
+                    shutil.rmtree(video_dir, ignore_errors=True)
+                    raise HTTPException(413, "File too large")
                 await out_file.write(chunk)
-        print(f"[upload] File saved to {original_path}", flush=True)
+        print(f"[upload] File saved (video_id={video_id})", flush=True)
+    except HTTPException:
+        raise
     except Exception as e:
         shutil.rmtree(video_dir, ignore_errors=True)
-        raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {e}")
+        logger.error("Failed to save uploaded file: %s", e)
+        raise HTTPException(status_code=500, detail="Upload failed — please try again")
 
     # Transcode video to 480p H264 mp4
     print(f"[upload] Transcoding to 480p H264...", flush=True)
@@ -173,13 +211,12 @@ async def upload_video(file: UploadFile = File(...)):
         print(f"[upload] Transcoding complete", flush=True)
     except ffmpeg.Error as e:
         shutil.rmtree(video_dir, ignore_errors=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Video transcoding failed: {e.stderr.decode() if e.stderr else str(e)}"
-        )
+        logger.error("Video transcoding failed (video_id=%s): %s", video_id, e.stderr.decode() if e.stderr else str(e))
+        raise HTTPException(status_code=500, detail="Video processing failed — please re-upload")
     except Exception as e:
         shutil.rmtree(video_dir, ignore_errors=True)
-        raise HTTPException(status_code=500, detail=f"Video transcoding failed: {e}")
+        logger.error("Video transcoding failed (video_id=%s): %s", video_id, e)
+        raise HTTPException(status_code=500, detail="Video processing failed — please re-upload")
 
     # Extract audio as 16kHz mono wav for whisper
     print(f"[upload] Extracting 16kHz mono WAV for Whisper...", flush=True)
@@ -202,13 +239,12 @@ async def upload_video(file: UploadFile = File(...)):
         print(f"[upload] Audio extraction complete", flush=True)
     except ffmpeg.Error as e:
         shutil.rmtree(video_dir, ignore_errors=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Audio extraction failed: {e.stderr.decode() if e.stderr else str(e)}"
-        )
+        logger.error("Audio extraction failed (video_id=%s): %s", video_id, e.stderr.decode() if e.stderr else str(e))
+        raise HTTPException(status_code=500, detail="Video processing failed — please re-upload")
     except Exception as e:
         shutil.rmtree(video_dir, ignore_errors=True)
-        raise HTTPException(status_code=500, detail=f"Audio extraction failed: {e}")
+        logger.error("Audio extraction failed (video_id=%s): %s", video_id, e)
+        raise HTTPException(status_code=500, detail="Video processing failed — please re-upload")
 
     # Get video duration using ffprobe
     try:
@@ -229,7 +265,8 @@ async def upload_video(file: UploadFile = File(...)):
 
 
 @app.post("/api/upload-srt")
-async def upload_srt(file: UploadFile = File(...)):
+@limiter.limit("10/minute")
+async def upload_srt(request: Request, file: UploadFile = File(...)):
     """
     Accept an SRT file upload, parse and return the subtitles list.
     """
@@ -244,11 +281,13 @@ async def upload_srt(file: UploadFile = File(...)):
         subtitles = parse_srt(content)
         return {"subtitles": subtitles}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to parse SRT file: {e}")
+        logger.error("Failed to parse SRT file: %s", e)
+        raise HTTPException(status_code=400, detail="Failed to parse SRT file")
 
 
 @app.get("/api/audio/{video_id}")
-async def stream_audio(video_id: str):
+@limiter.limit("30/minute")
+async def stream_audio(request: Request, video_id: str):
     """
     Serve the extracted 16kHz mono WAV audio for the waveform visualizer.
     """
@@ -259,7 +298,8 @@ async def stream_audio(video_id: str):
 
 
 @app.get("/api/video/{video_id}")
-async def stream_video(video_id: str):
+@limiter.limit("30/minute")
+async def stream_video(request: Request, video_id: str):
     """
     Stream the transcoded video file for the given video_id.
     """
@@ -277,7 +317,9 @@ async def stream_video(video_id: str):
 
 
 @app.get("/api/transcribe/{video_id}")
+@limiter.limit("5/minute")
 async def transcribe_video(
+    request: Request,
     video_id: str,
     model: str = "base",
     language: Optional[str] = None,
@@ -337,8 +379,8 @@ async def transcribe_video(
                     continue
 
                 if isinstance(item, Exception):
-                    print(f"[transcribe] ERROR: {item}", flush=True)
-                    yield {"data": json.dumps({"type": "error", "message": str(item)})}
+                    logger.error("[transcribe] ERROR (video_id=%s): %s", video_id, item)
+                    yield {"data": json.dumps({"type": "error", "message": "Transcription failed — please try again"})}
                     break
 
                 segments_so_far, is_done = item
@@ -372,7 +414,8 @@ class TranslateRequest(BaseModel):
 
 
 @app.post("/api/translate")
-async def translate_video_subtitles(request: TranslateRequest):
+@limiter.limit("5/minute")
+async def translate_video_subtitles(http_request: Request, request: TranslateRequest):
     """
     SSE endpoint to stream translation progress.
     Events:
@@ -416,7 +459,8 @@ async def translate_video_subtitles(request: TranslateRequest):
 
                 if item.get("is_done"):
                     if "error" in item:
-                        yield {"data": json.dumps({"type": "error", "message": item["error"]})}
+                        logger.error("[translate] ERROR: %s", item["error"])
+                        yield {"data": json.dumps({"type": "error", "message": "Translation failed — please try again"})}
                     else:
                         yield {"data": json.dumps({"type": "done", "subtitles": item["result"]})}
                     break
