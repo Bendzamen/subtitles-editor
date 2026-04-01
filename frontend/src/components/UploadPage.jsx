@@ -476,7 +476,7 @@ export default function UploadPage({ onComplete }) {
       setLoadingProgress(100)
       setIsLoading(false)
       onComplete({
-        videoId: audioId, videoUrl, audioUrl: audioBlobUrl,
+        videoId: audioId, videoUrl, audioUrl: `/api/audio/${audioId}`,
         subtitles: finalSubtitles, duration,
         exportFileName: buildExportFileName(), translationWarning,
       })
