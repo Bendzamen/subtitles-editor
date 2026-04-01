@@ -1,7 +1,9 @@
 import React, { useState, useRef, useCallback } from 'react'
 import axios from 'axios'
 import LoadingOverlay from './LoadingOverlay.jsx'
-import { parseSRT } from '../utils/srtParser.js'
+import { extractAudio } from '../utils/clientAudio.js'
+
+const canExtractAudio = typeof SharedArrayBuffer !== 'undefined'
 
 const WHISPER_MODELS = [
   { value: 'tiny', label: 'Tiny (fastest, least accurate)' },
@@ -138,6 +140,23 @@ const TRANSLATE_LANGUAGES = [
   { value: 'Ukrainian', label: 'Ukrainian' },
 ]
 
+/** Read video duration from the file's metadata without uploading. */
+function getVideoDuration(file) {
+  return new Promise((resolve) => {
+    const video = document.createElement('video')
+    video.preload = 'metadata'
+    video.onloadedmetadata = () => {
+      resolve(video.duration || 0)
+      URL.revokeObjectURL(video.src)
+    }
+    video.onerror = () => {
+      resolve(0)
+      URL.revokeObjectURL(video.src)
+    }
+    video.src = URL.createObjectURL(file)
+  })
+}
+
 export default function UploadPage({ onComplete }) {
   const [videoFile, setVideoFile] = useState(null)
   const [srtFile, setSrtFile] = useState(null)
@@ -197,14 +216,74 @@ export default function UploadPage({ onComplete }) {
 
   // ── Shared helpers ──────────────────────────────────────────────────────────
 
-  async function uploadVideo(onProgress) {
+  /**
+   * Extract audio from video in the browser.
+   * Shows WASM download progress then extraction progress.
+   * Returns { file, blobUrl } for the extracted audio.
+   */
+  async function doExtractAudio(progressBase, progressRange) {
+    setLoadingTitle('Preparing audio...')
+    setLoadingStatus('Downloading encoder...')
+    setLoadingProgress(progressBase)
+
+    const wasmRange = Math.round(progressRange * 0.4)
+    const compileRange = Math.round(progressRange * 0.15)
+    const extractRange = progressRange - wasmRange - compileRange
+
+    const { file, blobUrl } = await extractAudio(
+      videoFile,
+      // extraction progress
+      (pct) => {
+        setLoadingProgress(progressBase + wasmRange + compileRange + Math.round((pct / 100) * extractRange))
+        if (pct < 5) setLoadingStatus('Starting extraction...')
+        else setLoadingStatus(`Extracting audio... ${pct}%`)
+      },
+      // wasm download progress
+      (received, total) => {
+        const mb = (received / (1024 * 1024)).toFixed(1)
+        if (total) {
+          const pct = Math.round((received / total) * 100)
+          const totalMb = (total / (1024 * 1024)).toFixed(0)
+          setLoadingProgress(progressBase + Math.round((pct / 100) * wasmRange))
+          setLoadingStatus(`Downloading encoder... ${mb}/${totalMb} MB`)
+        } else {
+          setLoadingStatus(`Downloading encoder... ${mb} MB`)
+        }
+      },
+      // status phase changes
+      (phase) => {
+        if (phase === 'compiling') {
+          setLoadingProgress(progressBase + wasmRange)
+          setLoadingStatus('Initializing encoder...')
+        } else if (phase === 'extracting') {
+          setLoadingProgress(progressBase + wasmRange + compileRange)
+          setLoadingStatus('Starting extraction...')
+        }
+      },
+    )
+    return { file, blobUrl }
+  }
+
+  /** Upload extracted audio to the server for transcription. */
+  async function uploadAudioToServer(audioFile, progressBase, progressRange) {
+    setLoadingTitle('Uploading audio...')
+    setLoadingStatus('Sending audio to server...')
+
     const formData = new FormData()
-    formData.append('file', videoFile)
-    const res = await axios.post('/api/upload', formData, {
+    formData.append('file', audioFile)
+    const res = await axios.post('/api/upload-audio', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      onUploadProgress: onProgress,
+      onUploadProgress: (e) => {
+        if (e.total) {
+          const pct = progressBase + Math.round((e.loaded / e.total) * progressRange)
+          setLoadingProgress(pct)
+          const mb = (e.loaded / (1024 * 1024)).toFixed(1)
+          const totalMb = (e.total / (1024 * 1024)).toFixed(1)
+          setLoadingStatus(`Uploading audio... ${mb}/${totalMb} MB`)
+        }
+      },
     })
-    return res.data // { video_id, duration }
+    return res.data // { audio_id }
   }
 
   async function parseSrtFile() {
@@ -294,26 +373,28 @@ export default function UploadPage({ onComplete }) {
 
   const handleGenerateSubtitles = useCallback(async () => {
     if (!videoFile) return
+    if (!canExtractAudio) {
+      alert('Your browser does not support SharedArrayBuffer. Please use a modern browser.')
+      return
+    }
     setIsLoading(true)
     setLoadingSegments([])
 
     try {
-      // Step 1: Upload & transcode video
-      setLoadingTitle('Uploading video...')
-      setLoadingStatus('Transcoding to 480p...')
-      setLoadingProgress(5)
+      // Local video URL for playback (never uploaded)
+      const videoUrl = URL.createObjectURL(videoFile)
+      const duration = await getVideoDuration(videoFile)
 
-      const { video_id: videoId, duration } = await uploadVideo((e) => {
-        if (e.total) setLoadingProgress(Math.round(5 + (e.loaded / e.total) * 30))
-      })
-      const videoUrl = `/api/video/${videoId}`
+      // Step 1: Extract audio in browser (0–40%)
+      const { file: audioFile, blobUrl: audioBlobUrl } = await doExtractAudio(0, 40)
 
-      // Step 2: If SRT uploaded, skip Whisper
+      // Step 2: If SRT provided, skip upload + Whisper — just open editor
       if (srtFile) {
         setLoadingTitle('Reading SRT file...')
         setLoadingStatus('Parsing subtitles...')
         setLoadingProgress(80)
         const subtitles = await parseSrtFile()
+
         let finalSubtitles = subtitles
         let translationWarning = null
         if (targetLanguage) {
@@ -321,20 +402,28 @@ export default function UploadPage({ onComplete }) {
           finalSubtitles = result.subtitles
           translationWarning = result.warning
         }
+
         setIsLoading(false)
-        onComplete({ videoId, videoUrl, subtitles: finalSubtitles, duration, exportFileName: buildExportFileName(), translationWarning })
+        onComplete({
+          videoId: null, videoUrl, audioUrl: audioBlobUrl,
+          subtitles: finalSubtitles, duration,
+          exportFileName: buildExportFileName(), translationWarning,
+        })
         return
       }
 
-      // Step 3: Transcribe via SSE
+      // Step 3: Upload audio to server for transcription (40–55%)
+      const { audio_id: audioId } = await uploadAudioToServer(audioFile, 40, 15)
+
+      // Step 4: Transcribe via SSE (55–90%)
       setLoadingTitle('Transcribing audio...')
       setLoadingStatus(`Loading Whisper ${model} model...`)
-      setLoadingProgress(35)
+      setLoadingProgress(55)
 
       const transcribedSubtitles = await new Promise((resolve, reject) => {
         const params = new URLSearchParams({ model })
         if (sourceLanguage) params.append('language', sourceLanguage)
-        const es = new EventSource(`/api/transcribe/${videoId}?${params.toString()}`)
+        const es = new EventSource(`/api/transcribe/${audioId}?${params.toString()}`)
 
         const STREAM_TIMEOUT_MS = 10 * 60 * 1000
         let receivedDone = false
@@ -349,7 +438,7 @@ export default function UploadPage({ onComplete }) {
             if (data.type === 'ping') return
             if (data.type === 'progress') {
               setLoadingSegments(data.segments || [])
-              setLoadingProgress(Math.round(Math.min(85, 35 + (data.count * 0.5))))
+              setLoadingProgress(Math.round(Math.min(88, 55 + (data.count * 0.5))))
               setLoadingStatus(`Transcribed ${data.count} segments...`)
             } else if (data.type === 'done') {
               receivedDone = true
@@ -375,7 +464,7 @@ export default function UploadPage({ onComplete }) {
         }
       })
 
-      // Step 4: Optionally translate
+      // Step 5: Optionally translate (90–99%)
       let finalSubtitles = transcribedSubtitles
       let translationWarning = null
       if (targetLanguage) {
@@ -386,7 +475,11 @@ export default function UploadPage({ onComplete }) {
 
       setLoadingProgress(100)
       setIsLoading(false)
-      onComplete({ videoId, videoUrl, subtitles: finalSubtitles, duration, exportFileName: buildExportFileName(), translationWarning })
+      onComplete({
+        videoId: audioId, videoUrl, audioUrl: audioBlobUrl,
+        subtitles: finalSubtitles, duration,
+        exportFileName: buildExportFileName(), translationWarning,
+      })
 
     } catch (err) {
       console.error(err)
@@ -403,19 +496,19 @@ export default function UploadPage({ onComplete }) {
     setLoadingSegments([])
 
     try {
-      let videoId = null, videoUrl = null, duration = 0
+      let videoUrl = null, audioUrl = null, duration = 0
 
-      // Optionally upload video
+      // Optionally extract audio for waveform (video stays local)
       if (videoFile) {
-        setLoadingTitle('Uploading video...')
-        setLoadingStatus('Transcoding to 480p...')
-        setLoadingProgress(5)
-        const result = await uploadVideo((e) => {
-          if (e.total) setLoadingProgress(Math.round(5 + (e.loaded / e.total) * 30))
-        })
-        videoId = result.video_id
-        videoUrl = `/api/video/${videoId}`
-        duration = result.duration
+        if (!canExtractAudio) {
+          alert('Your browser does not support SharedArrayBuffer. Please use a modern browser.')
+          setIsLoading(false)
+          return
+        }
+        videoUrl = URL.createObjectURL(videoFile)
+        duration = await getVideoDuration(videoFile)
+        const { blobUrl } = await doExtractAudio(0, 30)
+        audioUrl = blobUrl
       }
 
       // Parse the SRT file
@@ -429,7 +522,11 @@ export default function UploadPage({ onComplete }) {
 
       setLoadingProgress(100)
       setIsLoading(false)
-      onComplete({ videoId, videoUrl, subtitles: finalSubtitles, duration, exportFileName: buildExportFileName(), translationWarning })
+      onComplete({
+        videoId: null, videoUrl, audioUrl,
+        subtitles: finalSubtitles, duration,
+        exportFileName: buildExportFileName(), translationWarning,
+      })
 
     } catch (err) {
       console.error(err)
@@ -442,8 +539,15 @@ export default function UploadPage({ onComplete }) {
 
   const handleStartEmpty = useCallback(async () => {
     if (!videoFile) {
-      // No video — open editor with empty subtitles immediately
-      onComplete({ videoId: null, videoUrl: null, subtitles: [], duration: 0, exportFileName: buildExportFileName() })
+      onComplete({
+        videoId: null, videoUrl: null, audioUrl: null,
+        subtitles: [], duration: 0, exportFileName: buildExportFileName(),
+      })
+      return
+    }
+
+    if (!canExtractAudio) {
+      alert('Your browser does not support SharedArrayBuffer. Please use a modern browser.')
       return
     }
 
@@ -451,18 +555,18 @@ export default function UploadPage({ onComplete }) {
     setLoadingSegments([])
 
     try {
-      setLoadingTitle('Uploading video...')
-      setLoadingStatus('Transcoding to 480p...')
-      setLoadingProgress(5)
+      const videoUrl = URL.createObjectURL(videoFile)
+      const duration = await getVideoDuration(videoFile)
 
-      const { video_id: videoId, duration } = await uploadVideo((e) => {
-        if (e.total) setLoadingProgress(Math.round(5 + (e.loaded / e.total) * 90))
-      })
-      const videoUrl = `/api/video/${videoId}`
+      // Extract audio for waveform (nothing uploaded)
+      const { blobUrl: audioUrl } = await doExtractAudio(0, 90)
 
       setLoadingProgress(100)
       setIsLoading(false)
-      onComplete({ videoId, videoUrl, subtitles: [], duration, exportFileName: buildExportFileName() })
+      onComplete({
+        videoId: null, videoUrl, audioUrl,
+        subtitles: [], duration, exportFileName: buildExportFileName(),
+      })
 
     } catch (err) {
       console.error(err)
@@ -474,9 +578,6 @@ export default function UploadPage({ onComplete }) {
   // ── Button enabled states ───────────────────────────────────────────────────
   const canGenerate = !!videoFile
   const canTranslateOnly = !!srtFile && !!targetLanguage
-  // Start empty is always available
-
-  const sourceLanguageLabel = LANGUAGES.find(l => l.value === sourceLanguage)?.label || 'Auto-detect'
 
   return (
     <div className="upload-page">
@@ -500,7 +601,7 @@ export default function UploadPage({ onComplete }) {
           ) : (
             <>
               <div className="drop-zone-text">Drop video here or click to browse</div>
-              <div className="drop-zone-hint">Supports MP4, MKV, AVI, MOV, WebM — optional for Translate Only / Start Empty</div>
+              <div className="drop-zone-hint">Supports MP4, MKV, AVI, MOV, WebM — video stays in your browser, only audio is sent for transcription</div>
             </>
           )}
           <input

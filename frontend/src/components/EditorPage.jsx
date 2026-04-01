@@ -6,6 +6,7 @@ import { downloadSRT } from '../utils/srtExporter.js'
 export default function EditorPage({
   videoId,
   videoUrl,
+  audioUrl,
   subtitles,
   setSubtitles,
   duration,
@@ -23,7 +24,6 @@ export default function EditorPage({
   const pendingSelectTimeRef = useRef(null)
 
   const hasVideo = !!videoUrl
-  const audioUrl = videoId ? `/api/audio/${videoId}` : null
 
   // Track video time -> update active subtitle, auto-scroll list when playing
   useEffect(() => {
@@ -168,8 +168,8 @@ export default function EditorPage({
           </div>
         </div>
 
-        {/* Bottom: waveform (full width, only when video is available) */}
-        {hasVideo && <div className="waveform-section">
+        {/* Bottom: waveform (full width, only when audio is available) */}
+        {hasVideo && audioUrl && <div className="waveform-section">
           <div className="waveform-controls">
             <span className="waveform-zoom-label">Zoom</span>
             <input

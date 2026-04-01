@@ -40,9 +40,14 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MAX_FILE_AGE_SECONDS = 600  # 10 minutes
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "http://localhost:5173")
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
-ALLOWED_MIME = {
+ALLOWED_VIDEO_MIME = {
     "video/mp4", "video/x-matroska", "video/webm", "video/quicktime",
     "video/x-msvideo", "video/mpeg",
+}
+ALLOWED_AUDIO_MIME = {
+    "audio/wav", "audio/x-wav", "audio/wave", "audio/mpeg", "audio/mp4",
+    "audio/mp3", "audio/ogg", "audio/flac", "audio/x-flac", "audio/aac",
+    "audio/webm",
 }
 MAX_SRT_BYTES = 10 * 1024 * 1024  # 10 MB
 MAX_VIDEO_DURATION = int(os.getenv("MAX_VIDEO_DURATION", str(4 * 3600)))  # 4 hours
@@ -156,105 +161,64 @@ async def health():
     return {"status": "ok"}
 
 
-@app.post("/api/upload")
+@app.post("/api/upload-audio")
 @limiter.limit("10/minute")
-async def upload_video(request: Request, file: UploadFile = File(...)):
+async def upload_audio(request: Request, file: UploadFile = File(...)):
     """
-    Accept a video file upload.
-    - Transcode to 480p H264 mp4 (max 1500k bitrate, aac 128k audio)
-    - Extract 16kHz mono wav for whisper
-    - Return {video_id, duration}
+    Accept browser-extracted audio for Whisper transcription.
+    The browser extracts audio from the video locally (ffmpeg.wasm) and
+    uploads only the audio track — the video never leaves the client.
+    Saves as 16kHz mono WAV for Whisper (converts if not already WAV).
+    Returns {audio_id}.
     """
     # MIME type validation
     header = await file.read(2048)
     mime = magic.from_buffer(header, mime=True)
-    if mime not in ALLOWED_MIME:
-        raise HTTPException(400, "Unsupported file type")
+    if mime not in ALLOWED_AUDIO_MIME:
+        raise HTTPException(400, f"Unsupported audio type: {mime}")
     await file.seek(0)
 
-    video_id = str(uuid.uuid4())
-    video_dir = get_video_dir(video_id)
-    video_dir.mkdir(parents=True, exist_ok=True)
+    audio_id = str(uuid.uuid4())
+    audio_dir = get_video_dir(audio_id)
+    audio_dir.mkdir(parents=True, exist_ok=True)
 
-    original_ext = Path(file.filename).suffix.lower() if file.filename else ".mp4"
-    original_path = video_dir / f"original{original_ext}"
-    transcoded_path = video_dir / "video.mp4"
-    audio_path = video_dir / "audio.wav"
+    original_ext = Path(file.filename).suffix.lower() if file.filename else ".wav"
+    original_path = audio_dir / f"original{original_ext}"
+    audio_path = audio_dir / "audio.wav"
 
-    logger.info("Upload received: filename=%s video_id=%s", file.filename, video_id)
+    logger.info("Audio upload received: filename=%s audio_id=%s", file.filename, audio_id)
 
     # Save uploaded file with size limit enforcement
     try:
         total = 0
-        last_logged_mb = 0
         t_upload_start = time.time()
         async with aiofiles.open(original_path, "wb") as out_file:
             while True:
-                chunk = await file.read(1024 * 1024)  # 1MB chunks
+                chunk = await file.read(1024 * 1024)
                 if not chunk:
                     break
                 total += len(chunk)
                 if total > MAX_UPLOAD_BYTES:
                     original_path.unlink(missing_ok=True)
-                    shutil.rmtree(video_dir, ignore_errors=True)
+                    shutil.rmtree(audio_dir, ignore_errors=True)
                     raise HTTPException(413, "File too large")
                 await out_file.write(chunk)
-                received_mb = total // (100 * 1024 * 1024)  # log every 100 MB
-                if received_mb > last_logged_mb:
-                    last_logged_mb = received_mb
-                    logger.info("Upload progress: video_id=%s received=%.0fMB elapsed=%.1fs",
-                                video_id, total / (1024 * 1024), time.time() - t_upload_start)
-        logger.info("Upload done: video_id=%s size=%.1fMB elapsed=%.1fs",
-                    video_id, total / (1024 * 1024), time.time() - t_upload_start)
+        logger.info("Audio upload done: audio_id=%s size=%.1fMB elapsed=%.1fs",
+                    audio_id, total / (1024 * 1024), time.time() - t_upload_start)
     except HTTPException:
         raise
     except Exception as e:
-        shutil.rmtree(video_dir, ignore_errors=True)
-        logger.error("Failed to save uploaded file: video_id=%s error=%s", video_id, e)
+        shutil.rmtree(audio_dir, ignore_errors=True)
+        logger.error("Failed to save uploaded audio: audio_id=%s error=%s", audio_id, e)
         raise HTTPException(status_code=500, detail="Upload failed — please try again")
 
-    # Transcode video to 480p H264 mp4
-    input_mb = total / (1024 * 1024)
-    logger.info("Transcoding start: video_id=%s input_size=%.1fMB preset=ultrafast", video_id, input_mb)
+    loop = asyncio.get_event_loop()
+
+    # Convert to 16kHz mono WAV for Whisper (fast for audio-only files)
+    logger.info("Audio conversion start: audio_id=%s", audio_id)
     t0 = time.time()
     try:
-        loop = asyncio.get_event_loop()
-
-        def transcode_video():
-            (
-                ffmpeg
-                .input(str(original_path))
-                .output(
-                    str(transcoded_path),
-                    vf="scale=-2:480",
-                    vcodec="libx264",
-                    video_bitrate="1500k",
-                    acodec="aac",
-                    audio_bitrate="128k",
-                    movflags="+faststart",
-                    preset="ultrafast",
-                )
-                .overwrite_output()
-                .run(capture_stdout=True, capture_stderr=True)
-            )
-
-        await loop.run_in_executor(None, transcode_video)
-        output_mb = transcoded_path.stat().st_size / (1024 * 1024)
-        logger.info("Transcoding done: video_id=%s elapsed=%.1fs output_size=%.1fMB", video_id, time.time() - t0, output_mb)
-    except ffmpeg.Error as e:
-        shutil.rmtree(video_dir, ignore_errors=True)
-        logger.error("Transcoding failed: video_id=%s elapsed=%.1fs error=%s", video_id, time.time() - t0, e.stderr.decode() if e.stderr else str(e))
-        raise HTTPException(status_code=500, detail="Video processing failed — please re-upload")
-    except Exception as e:
-        shutil.rmtree(video_dir, ignore_errors=True)
-        logger.error("Transcoding failed: video_id=%s elapsed=%.1fs error=%s", video_id, time.time() - t0, e)
-        raise HTTPException(status_code=500, detail="Video processing failed — please re-upload")
-
-    # Extract audio as 16kHz mono wav for whisper
-    logger.info("Audio extraction start: video_id=%s", video_id)
-    t0 = time.time()
-    try:
-        def extract_audio():
+        def convert_audio():
             (
                 ffmpeg
                 .input(str(original_path))
@@ -268,40 +232,22 @@ async def upload_video(request: Request, file: UploadFile = File(...)):
                 .run(capture_stdout=True, capture_stderr=True)
             )
 
-        await loop.run_in_executor(None, extract_audio)
-        logger.info("Audio extraction done: video_id=%s elapsed=%.1fs", video_id, time.time() - t0)
+        await loop.run_in_executor(None, convert_audio)
+        logger.info("Audio conversion done: audio_id=%s elapsed=%.1fs", audio_id, time.time() - t0)
     except ffmpeg.Error as e:
-        shutil.rmtree(video_dir, ignore_errors=True)
-        logger.error("Audio extraction failed: video_id=%s elapsed=%.1fs error=%s", video_id, time.time() - t0, e.stderr.decode() if e.stderr else str(e))
-        raise HTTPException(status_code=500, detail="Video processing failed — please re-upload")
+        shutil.rmtree(audio_dir, ignore_errors=True)
+        logger.error("Audio conversion failed: audio_id=%s elapsed=%.1fs error=%s", audio_id, time.time() - t0, e.stderr.decode() if e.stderr else str(e))
+        raise HTTPException(status_code=500, detail="Audio processing failed — please try again")
     except Exception as e:
-        shutil.rmtree(video_dir, ignore_errors=True)
-        logger.error("Audio extraction failed: video_id=%s elapsed=%.1fs error=%s", video_id, time.time() - t0, e)
-        raise HTTPException(status_code=500, detail="Video processing failed — please re-upload")
-
-    # Get video duration using ffprobe and enforce maximum
-    try:
-        def get_duration():
-            probe = ffmpeg.probe(str(transcoded_path))
-            return float(probe["format"].get("duration", 0))
-
-        duration = await loop.run_in_executor(None, get_duration)
-    except Exception:
-        duration = 0.0
-
-    if duration <= 0:
-        shutil.rmtree(video_dir, ignore_errors=True)
-        raise HTTPException(status_code=400, detail="Could not determine video duration — please re-upload")
-    if duration > MAX_VIDEO_DURATION:
-        shutil.rmtree(video_dir, ignore_errors=True)
-        max_h = MAX_VIDEO_DURATION // 3600
-        raise HTTPException(status_code=400, detail=f"Video too long (max {max_h}h)")
+        shutil.rmtree(audio_dir, ignore_errors=True)
+        logger.error("Audio conversion failed: audio_id=%s elapsed=%.1fs error=%s", audio_id, time.time() - t0, e)
+        raise HTTPException(status_code=500, detail="Audio processing failed — please try again")
 
     # Clean up original to save space
     original_path.unlink(missing_ok=True)
 
-    logger.info("Upload done: video_id=%s duration=%.1fs", video_id, duration)
-    return {"video_id": video_id, "duration": duration}
+    logger.info("Audio ready: audio_id=%s", audio_id)
+    return {"audio_id": audio_id}
 
 
 @app.post("/api/upload-srt")
@@ -339,25 +285,6 @@ async def stream_audio(request: Request, video_id: str):
     if not audio_path.exists():
         raise HTTPException(status_code=404, detail="Audio not found")
     return FileResponse(str(audio_path), media_type="audio/wav")
-
-
-@app.get("/api/video/{video_id}")
-@limiter.limit("30/minute")
-async def stream_video(request: Request, video_id: str):
-    """
-    Stream the transcoded video file for the given video_id.
-    """
-    video_dir = get_video_dir(video_id)
-    video_path = video_dir / "video.mp4"
-
-    if not video_path.exists():
-        raise HTTPException(status_code=404, detail="Video not found")
-
-    return FileResponse(
-        str(video_path),
-        media_type="video/mp4",
-        headers={"Accept-Ranges": "bytes"},
-    )
 
 
 @app.get("/api/transcribe/{video_id}")
