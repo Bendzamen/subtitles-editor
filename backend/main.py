@@ -186,6 +186,8 @@ async def upload_video(request: Request, file: UploadFile = File(...)):
     # Save uploaded file with size limit enforcement
     try:
         total = 0
+        last_logged_mb = 0
+        t_upload_start = time.time()
         async with aiofiles.open(original_path, "wb") as out_file:
             while True:
                 chunk = await file.read(1024 * 1024)  # 1MB chunks
@@ -197,7 +199,13 @@ async def upload_video(request: Request, file: UploadFile = File(...)):
                     shutil.rmtree(video_dir, ignore_errors=True)
                     raise HTTPException(413, "File too large")
                 await out_file.write(chunk)
-        logger.info("File saved: video_id=%s size=%d", video_id, total)
+                received_mb = total // (100 * 1024 * 1024)  # log every 100 MB
+                if received_mb > last_logged_mb:
+                    last_logged_mb = received_mb
+                    logger.info("Upload progress: video_id=%s received=%.0fMB elapsed=%.1fs",
+                                video_id, total / (1024 * 1024), time.time() - t_upload_start)
+        logger.info("Upload done: video_id=%s size=%.1fMB elapsed=%.1fs",
+                    video_id, total / (1024 * 1024), time.time() - t_upload_start)
     except HTTPException:
         raise
     except Exception as e:
@@ -206,7 +214,9 @@ async def upload_video(request: Request, file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="Upload failed — please try again")
 
     # Transcode video to 480p H264 mp4
-    logger.info("Transcoding to 480p H264: video_id=%s", video_id)
+    input_mb = total / (1024 * 1024)
+    logger.info("Transcoding start: video_id=%s input_size=%.1fMB preset=ultrafast", video_id, input_mb)
+    t0 = time.time()
     try:
         loop = asyncio.get_event_loop()
 
@@ -222,25 +232,27 @@ async def upload_video(request: Request, file: UploadFile = File(...)):
                     acodec="aac",
                     audio_bitrate="128k",
                     movflags="+faststart",
-                    preset="fast",
+                    preset="ultrafast",
                 )
                 .overwrite_output()
                 .run(capture_stdout=True, capture_stderr=True)
             )
 
         await loop.run_in_executor(None, transcode_video)
-        logger.info("Transcoding complete: video_id=%s", video_id)
+        output_mb = transcoded_path.stat().st_size / (1024 * 1024)
+        logger.info("Transcoding done: video_id=%s elapsed=%.1fs output_size=%.1fMB", video_id, time.time() - t0, output_mb)
     except ffmpeg.Error as e:
         shutil.rmtree(video_dir, ignore_errors=True)
-        logger.error("Transcoding failed: video_id=%s error=%s", video_id, e.stderr.decode() if e.stderr else str(e))
+        logger.error("Transcoding failed: video_id=%s elapsed=%.1fs error=%s", video_id, time.time() - t0, e.stderr.decode() if e.stderr else str(e))
         raise HTTPException(status_code=500, detail="Video processing failed — please re-upload")
     except Exception as e:
         shutil.rmtree(video_dir, ignore_errors=True)
-        logger.error("Transcoding failed: video_id=%s error=%s", video_id, e)
+        logger.error("Transcoding failed: video_id=%s elapsed=%.1fs error=%s", video_id, time.time() - t0, e)
         raise HTTPException(status_code=500, detail="Video processing failed — please re-upload")
 
     # Extract audio as 16kHz mono wav for whisper
-    logger.info("Extracting 16kHz mono WAV: video_id=%s", video_id)
+    logger.info("Audio extraction start: video_id=%s", video_id)
+    t0 = time.time()
     try:
         def extract_audio():
             (
@@ -257,14 +269,14 @@ async def upload_video(request: Request, file: UploadFile = File(...)):
             )
 
         await loop.run_in_executor(None, extract_audio)
-        logger.info("Audio extraction complete: video_id=%s", video_id)
+        logger.info("Audio extraction done: video_id=%s elapsed=%.1fs", video_id, time.time() - t0)
     except ffmpeg.Error as e:
         shutil.rmtree(video_dir, ignore_errors=True)
-        logger.error("Audio extraction failed: video_id=%s error=%s", video_id, e.stderr.decode() if e.stderr else str(e))
+        logger.error("Audio extraction failed: video_id=%s elapsed=%.1fs error=%s", video_id, time.time() - t0, e.stderr.decode() if e.stderr else str(e))
         raise HTTPException(status_code=500, detail="Video processing failed — please re-upload")
     except Exception as e:
         shutil.rmtree(video_dir, ignore_errors=True)
-        logger.error("Audio extraction failed: video_id=%s error=%s", video_id, e)
+        logger.error("Audio extraction failed: video_id=%s elapsed=%.1fs error=%s", video_id, time.time() - t0, e)
         raise HTTPException(status_code=500, detail="Video processing failed — please re-upload")
 
     # Get video duration using ffprobe and enforce maximum
