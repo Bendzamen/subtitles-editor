@@ -94,7 +94,7 @@ export async function extractAudio(file, onProgress, onWasmProgress, onStatus) {
 
     const data = await ff.readFile('/output.wav')
     onProgress(100)
-    const audioFile = new File([data.buffer], 'audio.wav', { type: 'audio/wav' })
+    const audioFile = new File([data], 'audio.wav', { type: 'audio/wav' })
     const blobUrl = URL.createObjectURL(audioFile)
     return { file: audioFile, blobUrl }
   } finally {
