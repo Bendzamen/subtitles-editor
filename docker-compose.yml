@@ -10,6 +10,7 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://host.docker.internal:3000/v1}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-sk-placeholder}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - TZ=${TZ}
     deploy:
       resources:
         limits:
@@ -30,6 +31,8 @@ services:
     build: ./frontend
     ports:
       - "3001:80"
+    environment:
+      - TZ=${TZ}
     depends_on:
       - backend
     restart: unless-stopped

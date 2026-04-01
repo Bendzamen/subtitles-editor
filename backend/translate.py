@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import asyncio
 from typing import List, Dict, Any, Callable, Optional, Tuple
@@ -6,6 +7,9 @@ from typing import List, Dict, Any, Callable, Optional, Tuple
 from openai import AsyncOpenAI
 
 from logger import get_logger
+
+_SAFE_LANG_RE = re.compile(r'^[A-Za-z\s\(\)]+$')
+_MAX_LANG_LEN = 50
 
 logger = get_logger(__name__)
 
@@ -33,11 +37,19 @@ async def translate_subtitles(
     translated = list(subtitles)  # copy
     failed_batches: List[int] = []
 
+    # Validate language strings before using in prompts
+    if not target_language or len(target_language) > _MAX_LANG_LEN or not _SAFE_LANG_RE.match(target_language):
+        raise ValueError(f"Invalid target language: {target_language!r}")
+
     # Build source language context for the prompt
+    safe_source: Optional[str] = None
     if source_language and source_language.strip() and source_language.lower() not in ("auto", "auto-detect", ""):
-        source_info = f" from {source_language}"
-    else:
-        source_info = ""
+        if len(source_language) <= _MAX_LANG_LEN and _SAFE_LANG_RE.match(source_language):
+            safe_source = source_language.strip()
+        else:
+            raise ValueError(f"Invalid source language: {source_language!r}")
+
+    source_info = f" from {safe_source}" if safe_source else ""
 
     logger.info("Translation starting: count=%d%s target=%s", total, source_info, target_language)
 

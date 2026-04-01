@@ -141,7 +141,7 @@ const TRANSLATE_LANGUAGES = [
 export default function UploadPage({ onComplete }) {
   const [videoFile, setVideoFile] = useState(null)
   const [srtFile, setSrtFile] = useState(null)
-  const [model, setModel] = useState('base')
+  const [model, setModel] = useState('large')
   const [sourceLanguage, setSourceLanguage] = useState('')
   const [targetLanguage, setTargetLanguage] = useState('')
   const [isDragging, setIsDragging] = useState(false)

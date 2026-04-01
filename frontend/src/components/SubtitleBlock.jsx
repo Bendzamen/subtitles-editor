@@ -2,6 +2,9 @@ import React, { useCallback } from 'react'
 import { secondsToSrtTime } from '../utils/srtExporter.js'
 import { srtTimeToSeconds } from '../utils/srtParser.js'
 
+const MAX_SUBTITLE_TEXT_LENGTH = 500
+const MAX_SUBTITLE_TIME_SECONDS = 86400 // 24 hours
+
 export default function SubtitleBlock({ subtitle, isSelected, isActive, onChange, onDelete, onSelect }) {
   const handleTimeChange = useCallback((field, value) => {
     // Try to parse the time string to seconds
@@ -13,7 +16,7 @@ export default function SubtitleBlock({ subtitle, isSelected, isActive, onChange
       } else {
         seconds = srtTimeToSeconds(value)
       }
-      if (!isNaN(seconds) && seconds >= 0) {
+      if (!isNaN(seconds) && seconds >= 0 && seconds <= MAX_SUBTITLE_TIME_SECONDS) {
         if (field === 'start' && seconds >= subtitle.end) return
         if (field === 'end' && seconds <= subtitle.start) return
         onChange({ ...subtitle, [field]: seconds })
@@ -69,6 +72,7 @@ export default function SubtitleBlock({ subtitle, isSelected, isActive, onChange
         onChange={handleTextChange}
         onClick={(e) => e.stopPropagation()}
         rows={2}
+        maxLength={MAX_SUBTITLE_TEXT_LENGTH}
       />
     </div>
   )

@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 import json
 import asyncio
@@ -43,6 +44,19 @@ ALLOWED_MIME = {
     "video/mp4", "video/x-matroska", "video/webm", "video/quicktime",
     "video/x-msvideo", "video/mpeg",
 }
+MAX_SRT_BYTES = 10 * 1024 * 1024  # 10 MB
+MAX_VIDEO_DURATION = int(os.getenv("MAX_VIDEO_DURATION", str(4 * 3600)))  # 4 hours
+MAX_TRANSCRIPTION_SECONDS = int(os.getenv("MAX_TRANSCRIPTION_SECONDS", str(3600)))  # 1 hour
+
+# Allowed target languages for translation (must match frontend TRANSLATE_LANGUAGES values)
+VALID_TRANSLATE_LANGUAGES = {
+    "English", "Spanish", "French", "German", "Italian", "Portuguese",
+    "Russian", "Japanese", "Korean", "Chinese (Simplified)", "Arabic",
+    "Hindi", "Dutch", "Polish", "Czech", "Slovak", "Swedish", "Turkish", "Ukrainian",
+}
+
+# Whisper language codes: 2–3 lowercase letters, optional subtag
+_WHISPER_LANG_RE = re.compile(r'^[a-z]{2,4}$')
 
 # --- FastAPI App ---
 limiter = Limiter(key_func=get_remote_address)
@@ -67,12 +81,15 @@ def cleanup_old_files():
         return
     for item in UPLOAD_DIR.iterdir():
         try:
+            # Only remove direct children of UPLOAD_DIR
+            if item.parent != UPLOAD_DIR:
+                continue
             item_age = now - item.stat().st_mtime
             if item_age > MAX_FILE_AGE_SECONDS:
                 if item.is_dir():
-                    shutil.rmtree(item, ignore_errors=True)
+                    shutil.rmtree(item)
                 else:
-                    item.unlink(missing_ok=True)
+                    item.unlink()
         except Exception as e:
             logger.warning("Cleanup error for %s: %s", item, e)
 
@@ -123,7 +140,13 @@ def get_video_dir(video_id: str) -> Path:
         UUID(video_id, version=4)
     except ValueError:
         raise HTTPException(400, "Invalid video ID")
-    return UPLOAD_DIR / video_id
+    video_dir = UPLOAD_DIR / video_id
+    # Ensure the resolved path stays within UPLOAD_DIR (path traversal guard)
+    try:
+        video_dir.resolve().relative_to(UPLOAD_DIR.resolve())
+    except ValueError:
+        raise HTTPException(400, "Invalid video ID")
+    return video_dir
 
 
 # --- Endpoints ---
@@ -244,16 +267,23 @@ async def upload_video(request: Request, file: UploadFile = File(...)):
         logger.error("Audio extraction failed: video_id=%s error=%s", video_id, e)
         raise HTTPException(status_code=500, detail="Video processing failed — please re-upload")
 
-    # Get video duration using ffprobe
+    # Get video duration using ffprobe and enforce maximum
     try:
         def get_duration():
             probe = ffmpeg.probe(str(transcoded_path))
-            duration = float(probe["format"].get("duration", 0))
-            return duration
+            return float(probe["format"].get("duration", 0))
 
         duration = await loop.run_in_executor(None, get_duration)
     except Exception:
         duration = 0.0
+
+    if duration <= 0:
+        shutil.rmtree(video_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail="Could not determine video duration — please re-upload")
+    if duration > MAX_VIDEO_DURATION:
+        shutil.rmtree(video_dir, ignore_errors=True)
+        max_h = MAX_VIDEO_DURATION // 3600
+        raise HTTPException(status_code=400, detail=f"Video too long (max {max_h}h)")
 
     # Clean up original to save space
     original_path.unlink(missing_ok=True)
@@ -269,7 +299,9 @@ async def upload_srt(request: Request, file: UploadFile = File(...)):
     Accept an SRT file upload, parse and return the subtitles list.
     """
     try:
-        content_bytes = await file.read()
+        content_bytes = await file.read(MAX_SRT_BYTES + 1)
+        if len(content_bytes) > MAX_SRT_BYTES:
+            raise HTTPException(413, "SRT file too large (max 10 MB)")
         # Try UTF-8 first, then latin-1 as fallback
         try:
             content = content_bytes.decode("utf-8")
@@ -278,6 +310,8 @@ async def upload_srt(request: Request, file: UploadFile = File(...)):
 
         subtitles = parse_srt(content)
         return {"subtitles": subtitles}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Failed to parse SRT file: %s", e)
         raise HTTPException(status_code=400, detail="Failed to parse SRT file")
@@ -339,9 +373,20 @@ async def transcribe_video(
 
     valid_models = {"tiny", "base", "small", "medium", "large"}
     if model not in valid_models:
-        model = "base"
+        async def bad_model_gen():
+            yield {"data": json.dumps({"type": "error", "message": f"Invalid model. Must be one of: {', '.join(sorted(valid_models))}"})}
+        return EventSourceResponse(bad_model_gen())
 
-    lang_info = f", language={language}" if language and language != "auto" else ", auto-detect"
+    # Validate and sanitize the language code
+    whisper_language: Optional[str] = None
+    if language and language not in ("", "auto"):
+        if not _WHISPER_LANG_RE.match(language):
+            async def bad_lang_gen():
+                yield {"data": json.dumps({"type": "error", "message": "Invalid language code"})}
+            return EventSourceResponse(bad_lang_gen())
+        whisper_language = language
+
+    lang_info = f", language={whisper_language}" if whisper_language else ", auto-detect"
     logger.info("Transcription start: video_id=%s model=%s%s", video_id, model, lang_info)
 
     async def event_generator():
@@ -356,7 +401,7 @@ async def transcribe_video(
                 await transcribe_audio(
                     str(audio_path),
                     model,
-                    language if language and language != "auto" else None,
+                    whisper_language,
                     progress_callback,
                 )
             except Exception as e:
@@ -365,9 +410,15 @@ async def transcribe_video(
                 done_event.set()
 
         task = asyncio.create_task(run_transcription())
+        deadline = time.time() + MAX_TRANSCRIPTION_SECONDS
 
         try:
             while True:
+                if time.time() > deadline:
+                    task.cancel()
+                    logger.error("Transcription timeout: video_id=%s", video_id)
+                    yield {"data": json.dumps({"type": "error", "message": "Transcription timed out — please try a smaller model or shorter video"})}
+                    break
                 try:
                     item = await asyncio.wait_for(queue.get(), timeout=30.0)
                 except asyncio.TimeoutError:
@@ -425,6 +476,15 @@ async def translate_video_subtitles(http_request: Request, request: TranslateReq
     subtitles = request.subtitles
     target_language = request.target_language
     source_language = request.source_language
+
+    # Validate target language against allowlist to prevent prompt injection
+    if target_language not in VALID_TRANSLATE_LANGUAGES:
+        raise HTTPException(400, "Invalid target language")
+
+    # Validate source language: must be empty/auto, or a valid whisper code
+    if source_language and source_language not in ("", "auto", "auto-detect"):
+        if not _WHISPER_LANG_RE.match(source_language):
+            raise HTTPException(400, "Invalid source language code")
 
     logger.info("Translation start: count=%d target=%s source=%s",
                 len(subtitles), target_language, source_language or "auto")
